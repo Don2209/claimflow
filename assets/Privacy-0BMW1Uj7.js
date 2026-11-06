@@ -1,0 +1,1 @@
+import{j as r}from"./index-sxmCa25F.js";import{L as t,p as o}from"./LegalPage-D8cnTT3_.js";import"./Seo-DjYDQbvP.js";import"./triangle-exclamation-point-ZpHza6rC.js";function e(){return r.jsx(t,{document:o})}export{e as default};

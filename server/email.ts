@@ -1,3 +1,4 @@
+import { resolveMx } from 'node:dns/promises';
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import nodemailer from 'nodemailer';
@@ -72,15 +73,22 @@ const stored = (): Stored | null => {
   return raw ? JSON.parse(raw) : null;
 };
 
-function connect(settings: InboxSettings) {
+const SECURE_PORT = 993;
+const UPGRADE_PORT = 143;
+const SENDING_PORTS = new Set([25, 465, 587, 2525]);
+const TRY_TIMEOUT_MS = 8_000;
+
+function connect(settings: InboxSettings, timeout = 20_000) {
   const client = new ImapFlow({
     host: settings.host,
     port: settings.port,
-    secure: !config.allowPlainInbox,
+    // Port 143 starts unencrypted, so it must upgrade before the password is sent.
+    secure: !config.allowPlainInbox && settings.port !== UPGRADE_PORT,
+    ...(!config.allowPlainInbox && settings.port === UPGRADE_PORT ? { doSTARTTLS: true } : {}),
     auth: { user: settings.user, pass: settings.password },
     logger: false,
-    connectionTimeout: 20_000,
-    greetingTimeout: 20_000,
+    connectionTimeout: timeout,
+    greetingTimeout: timeout,
     socketTimeout: 120_000,
   });
   // Without a listener, a dropped connection would stop the whole app.
@@ -96,6 +104,38 @@ function friendlyInboxError(error: unknown): string {
   if (code === 'ETIMEDOUT' || code === 'ECONNREFUSED' || code === 'ECONNRESET' || code === 'CONNECT_TIMEOUT' || code === 'GREETING_TIMEOUT') return 'The mail server did not answer. Check the address and port.';
   if (code?.startsWith('ERR_TLS') || code === 'DEPTH_ZERO_SELF_SIGNED_CERT' || code === 'CERT_HAS_EXPIRED') return "The mail server's security certificate could not be trusted.";
   return (message ?? 'The mailbox could not be reached.').slice(0, 200);
+}
+
+const KNOWN_DOMAINS: Record<string, string> = {
+  'gmail.com': 'imap.gmail.com', 'googlemail.com': 'imap.gmail.com', 'yahoo.com': 'imap.mail.yahoo.com', 'icloud.com': 'imap.mail.me.com',
+  'outlook.com': 'outlook.office365.com', 'hotmail.com': 'outlook.office365.com', 'live.com': 'outlook.office365.com', 'zoho.com': 'imap.zoho.com',
+};
+const KNOWN_MAIL_HOSTS: [RegExp, string][] = [
+  [/(google\.com|googlemail\.com)$/i, 'imap.gmail.com'], [/\.outlook\.com$/i, 'outlook.office365.com'], [/\.zoho\.[a-z.]+$/i, 'imap.zoho.com'],
+];
+
+/** The servers to try, best first. The password only ever goes to a server under the mailbox's own domain, one typed in, or a well-known provider. */
+export async function serversToTry(user: string, host = '', port?: number): Promise<{ host: string; port: number }[]> {
+  const domain = user.split('@')[1]?.toLowerCase() ?? '';
+  let hosts: string[];
+  if (host) hosts = [host];
+  else if (KNOWN_DOMAINS[domain]) hosts = [KNOWN_DOMAINS[domain]];
+  else {
+    const exchanges = await resolveMx(domain).catch(() => []);
+    const known = KNOWN_MAIL_HOSTS.find(([pattern]) => exchanges.some((item) => pattern.test(item.exchange)))?.[1];
+    hosts = known ? [known] : [`mail.${domain}`, `imap.${domain}`];
+  }
+  const ports = [...new Set([...(port && !SENDING_PORTS.has(port) ? [port] : []), SECURE_PORT, UPGRADE_PORT])];
+  return ports.flatMap((p) => hosts.map((h) => ({ host: h, port: p })));
+}
+
+function whyUnreachable(error: unknown): string {
+  const code = (error as { code?: string }).code ?? '';
+  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return 'no such server';
+  if (code === 'ECONNREFUSED') return 'refused the connection';
+  if (code.startsWith('ERR_TLS') || code.includes('CERT')) return 'its security certificate could not be trusted';
+  if (code.includes('TIMEOUT') || code === 'ETIMEDOUT') return 'did not answer';
+  return ((error as Error).message ?? 'could not connect').slice(0, 80);
 }
 
 async function checkInbox(): Promise<number> {
@@ -156,20 +196,32 @@ export function inboxView() {
 }
 
 /** Tests the details first, so a mistake is reported straight away and nothing wrong is saved. A blank password keeps the saved one. */
-export async function connectInbox(input: Omit<InboxSettings, 'password'> & { password: string }): Promise<string | null> {
+export async function connectInbox(input: { host?: string; port?: number; user: string; password: string; mailbox: string }): Promise<string | null> {
   const previous = stored();
-  const password = input.password || (previous && previous.user === input.user && previous.host === input.host ? decryptText(previous.passwordEncrypted) : '');
+  const password = input.password || (previous && previous.user === input.user ? decryptText(previous.passwordEncrypted) : '');
   if (!password) return 'Enter the password for this mailbox.';
-  const client = connect({ ...input, password });
-  try {
-    await client.connect();
-    await client.mailboxOpen(input.mailbox, { readOnly: true });
-    await client.logout().catch(() => undefined);
-  } catch (error) {
-    client.close();
-    return friendlyInboxError(error);
+  const failures: string[] = [];
+  let found: { host: string; port: number } | null = null;
+  for (const server of await serversToTry(input.user, input.host, input.port)) {
+    const client = connect({ ...server, user: input.user, password, mailbox: input.mailbox }, TRY_TIMEOUT_MS);
+    try {
+      await client.connect();
+      await client.mailboxOpen(input.mailbox, { readOnly: true });
+      await client.logout().catch(() => undefined);
+      found = server;
+      break;
+    } catch (error) {
+      client.close();
+      // The server answered, so another one will not help, and the password should not be tried again.
+      const { authenticationFailed, mailboxMissing } = error as { authenticationFailed?: boolean; mailboxMissing?: boolean };
+      if (authenticationFailed || mailboxMissing) return friendlyInboxError(error);
+      failures.push(`${server.host} port ${server.port}: ${whyUnreachable(error)}`);
+    }
   }
-  const saved: Stored = { host: input.host, port: input.port, user: input.user, mailbox: input.mailbox, passwordEncrypted: encryptText(password), connectedAt: now() };
+  if (!found) {
+    return `ClaimsFlow could not reach the mail server. It tried ${failures.join('; ')}. If the same email works elsewhere, ask whoever hosts your mail to allow connections from ClaimsFlow's hosting, or enter the IMAP server under More options.`;
+  }
+  const saved: Stored = { ...found, user: input.user, mailbox: input.mailbox, passwordEncrypted: encryptText(password), connectedAt: now() };
   setSetting('inbox', JSON.stringify(saved));
   Object.assign(status, { lastCheck: null, lastError: null, lastAdded: 0 });
   void checkInboxNow();

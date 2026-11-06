@@ -66,6 +66,24 @@ test('a wrong password is explained, and nothing is saved', async () => {
   assert.equal(((await (await call('GET', '/settings/inbox')).json()) as any).connected, false);
 });
 
+test('the server is worked out from the email address, and a sending port is corrected', async () => {
+  const { serversToTry } = await import('../email.ts');
+  assert.deepEqual(await serversToTry('a@gmail.com'), [{ host: 'imap.gmail.com', port: 993 }, { host: 'imap.gmail.com', port: 143 }]);
+  const typed = await serversToTry('a@any.example', 'mail.any.example', 587);
+  assert.deepEqual(typed, [{ host: 'mail.any.example', port: 993 }, { host: 'mail.any.example', port: 143 }]);
+  const company = await serversToTry('a@company.invalid');
+  assert.deepEqual(company.slice(0, 2), [{ host: 'mail.company.invalid', port: 993 }, { host: 'imap.company.invalid', port: 993 }]);
+});
+
+test('when no server answers, the message says what was tried, and nothing is saved', async () => {
+  const res = await call('PUT', '/settings/inbox', { host: '127.0.0.1', port: 9, user: 'claims@insurer.example', password: PASSWORD, mailbox: 'INBOX' });
+  assert.equal(res.status, 400);
+  const { error }: any = await res.json();
+  assert.match(error, /127\.0\.0\.1 port 9: refused the connection/);
+  assert.match(error, /127\.0\.0\.1 port 993/);
+  assert.equal(((await (await call('GET', '/settings/inbox')).json()) as any).connected, false);
+});
+
 test('a handler cannot see or change the inbox', async () => {
   await call('POST', '/users', { email: 'h@example.com', name: 'Handler', role: 'handler', password: 'long-enough-pass' });
   const login = await call('POST', '/login', { email: 'h@example.com', password: 'long-enough-pass' }, '');

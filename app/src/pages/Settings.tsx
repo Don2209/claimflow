@@ -62,16 +62,9 @@ function Connections({ meta }: { meta: ShellContext['meta'] }) {
   );
 }
 
-const providers: Record<string, { host: string; port: number; hint: string }> = {
-  Gmail: { host: 'imap.gmail.com', port: 993, hint: 'Use a Google app password, not your normal password. It needs 2-Step Verification turned on.' },
-  Yahoo: { host: 'imap.mail.yahoo.com', port: 993, hint: 'Use a Yahoo app password, not your normal password.' },
-  'Company or hosting mailbox': { host: '', port: 993, hint: 'Your email provider or IT team can give you the IMAP server address. It is often mail.yourcompany.com.' },
-};
-
 function ClaimsInbox({ freePlan }: { freePlan: boolean }) {
   const [inbox, setInbox] = useState<Inbox | null>(null);
-  const [provider, setProvider] = useState('Gmail');
-  const [form, setForm] = useState({ host: providers.Gmail.host, port: '993', user: '', password: '', mailbox: 'INBOX' });
+  const [form, setForm] = useState({ user: '', password: '', host: '', port: '', mailbox: 'INBOX' });
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -85,13 +78,8 @@ function ClaimsInbox({ freePlan }: { freePlan: boolean }) {
   }, []);
 
   const set = (key: keyof typeof form) => (event: { target: { value: string } }) => setForm({ ...form, [key]: event.target.value });
-  const choose = (name: string) => {
-    setProvider(name);
-    setForm({ ...form, host: providers[name].host, port: String(providers[name].port) });
-  };
   const edit = () => {
     if (inbox?.connected) {
-      setProvider('Company or hosting mailbox');
       setForm({ host: inbox.host, port: String(inbox.port), user: inbox.user, password: '', mailbox: inbox.mailbox });
     }
     setEditing(true);
@@ -112,7 +100,7 @@ function ClaimsInbox({ freePlan }: { freePlan: boolean }) {
   };
   async function submit(event: FormEvent) {
     event.preventDefault();
-    await run(() => api('/settings/inbox', { method: 'PUT', body: { ...form, port: Number(form.port) } }), 'Connected. New email is now being watched.');
+    await run(() => api('/settings/inbox', { method: 'PUT', body: { ...form, port: form.port ? Number(form.port) : undefined } }), 'Connected. New email is now being watched.');
   }
 
   return (
@@ -126,6 +114,7 @@ function ClaimsInbox({ freePlan }: { freePlan: boolean }) {
           <>
             <dl className="grid gap-x-6 gap-y-2.5 text-small sm:grid-cols-2">
               <div><dt className="text-caption text-muted">Mailbox</dt><dd className="break-words font-medium">{inbox.user}</dd></div>
+              <div><dt className="text-caption text-muted">Server</dt><dd className="break-words font-medium">{inbox.host}, port {inbox.port}</dd></div>
               <div><dt className="text-caption text-muted">Folder</dt><dd className="font-medium">{inbox.mailbox}</dd></div>
               <div><dt className="text-caption text-muted">Watching mail since</dt><dd className="font-medium">{formatTime(inbox.connectedAt)}</dd></div>
               <div><dt className="text-caption text-muted">Last checked</dt><dd className="font-medium">{inbox.lastCheck ? `${formatTime(inbox.lastCheck)}, ${inbox.lastAdded} added` : 'First check is under way'}</dd></div>
@@ -141,21 +130,21 @@ function ClaimsInbox({ freePlan }: { freePlan: boolean }) {
         )}
         {inbox && (!inbox.connected || editing) && (
           <form className="grid gap-3 sm:grid-cols-2" onSubmit={submit}>
-            <Field label="Email provider" hint={providers[provider].hint}>
-              <select className={inputClass} value={provider} onChange={(e) => choose(e.target.value)}>
-                {Object.keys(providers).map((name) => <option key={name}>{name}</option>)}
-              </select>
-            </Field>
-            <Field label="Mail server (IMAP)"><input required className={inputClass} value={form.host} onChange={set('host')} /></Field>
-            <Field label="Mailbox email address"><input required type="email" autoComplete="off" className={inputClass} value={form.user} onChange={set('user')} /></Field>
-            <Field label={inbox.connected ? 'Password' : 'Password or app password'} hint={inbox.connected ? 'Leave blank to keep the saved one.' : 'Stored encrypted, and never shown again.'}>
+            <Field label="Email address"><input required type="email" autoComplete="off" className={inputClass} value={form.user} onChange={set('user')} /></Field>
+            <Field label="Password" hint={inbox.connected ? 'Leave blank to keep the saved one.' : 'Stored encrypted, and never shown again.'}>
               <input type="password" autoComplete="new-password" required={!inbox.connected} className={inputClass} value={form.password} onChange={set('password')} />
             </Field>
-            <Field label="Folder to watch"><input required className={inputClass} value={form.mailbox} onChange={set('mailbox')} /></Field>
-            <Field label="Port" hint="Almost always 993."><input required type="number" className={inputClass} value={form.port} onChange={set('port')} /></Field>
-            <p className="text-caption text-muted sm:col-span-2">Microsoft 365 usually blocks password sign-in like this. If yours does, forward claims to a separate mailbox and connect that one.</p>
+            <p className="text-caption text-muted sm:col-span-2">ClaimsFlow finds your mail server by itself. Gmail and Yahoo need an app password, not your normal one. Microsoft 365 usually blocks this kind of sign-in, so forward claims to a separate mailbox and connect that one.</p>
+            <details className="text-small sm:col-span-2">
+              <summary className="cursor-pointer font-semibold">More options, only if connecting fails</summary>
+              <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                <Field label="IMAP server" hint="Blank to find it."><input className={inputClass} value={form.host} onChange={set('host')} /></Field>
+                <Field label="Port" hint="Blank to find it."><input type="number" className={inputClass} value={form.port} onChange={set('port')} /></Field>
+                <Field label="Folder"><input className={inputClass} value={form.mailbox} onChange={set('mailbox')} /></Field>
+              </div>
+            </details>
             <div className="flex flex-wrap gap-2 sm:col-span-2">
-              <Button type="submit" variant="main" busy={busy}>Test and connect</Button>
+              <Button type="submit" variant="main" busy={busy}>Connect</Button>
               {editing && <Button onClick={() => setEditing(false)}>Cancel</Button>}
             </div>
           </form>

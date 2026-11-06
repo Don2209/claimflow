@@ -484,13 +484,13 @@ staff.get('/settings/inbox', requireManager, (c) => c.json(inboxView()));
 
 staff.put('/settings/inbox', requireManager, async (c) => {
   const input = z.object({
-    host: z.string().trim().min(3, 'Enter the mail server address.').max(200),
-    port: z.number().int().min(1).max(65535),
-    user: z.string().trim().min(3, 'Enter the mailbox email address.').max(200),
+    host: z.string().trim().max(200).optional(),
+    port: z.number().int().min(1).max(65535).optional(),
+    user: z.string().trim().email('Enter the mailbox email address.').max(200),
     password: z.string().max(500),
-    mailbox: z.string().trim().min(1, 'Enter the folder to watch.').max(200),
+    mailbox: z.string().trim().max(200).optional(),
   }).parse(await c.req.json());
-  const problem = await connectInbox(input);
+  const problem = await connectInbox({ ...input, mailbox: input.mailbox || 'INBOX' });
   if (problem) return c.json({ error: problem }, 400);
   audit(c.get('user').name, 'Connected claims inbox', null, input.user);
   return c.json(inboxView());

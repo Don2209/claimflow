@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { api } from '../api';
+import { api, type Inbox } from '../api';
 import type { ShellContext } from '../Shell';
 import { Button, Field, formatTime, inputClass, Notice, PageTitle, Sheet } from '../ui';
 
@@ -13,6 +13,7 @@ export function Settings() {
         {user.role === 'manager' && (
           <>
             <Connections meta={meta} />
+            <ClaimsInbox freePlan={meta.freeAiPlan} />
             <Retention />
           </>
         )}
@@ -40,15 +41,110 @@ function Connections({ meta }: { meta: ShellContext['meta'] }) {
           <dt className="font-semibold">Sending email</dt>
           <dd>{status(meta.sending, 'Set up', 'Not set up')}. {meta.sending ? 'Approved requests are sent from the claims address.' : 'Approved requests open in the handler\'s own email until mail settings are added.'}</dd>
         </div>
-        <div>
-          <dt className="font-semibold">Claims inbox</dt>
-          <dd>
-            {meta.inbox ? (
-              <>{status(!meta.inbox.lastError, `Watching ${meta.inbox.address}`, `Problem with ${meta.inbox.address}`)}. {meta.inbox.lastError ?? (meta.inbox.lastCheck ? `Last checked ${formatTime(meta.inbox.lastCheck)}.` : 'First check is under way.')}</>
-            ) : <>{status(false, '', 'Not connected')}. Add the inbox settings on the server, and new email attachments will land on the right claim.</>}
-          </dd>
-        </div>
       </dl>
+    </Sheet>
+  );
+}
+
+const providers: Record<string, { host: string; port: number; hint: string }> = {
+  Gmail: { host: 'imap.gmail.com', port: 993, hint: 'Use a Google app password, not your normal password. It needs 2-Step Verification turned on.' },
+  Yahoo: { host: 'imap.mail.yahoo.com', port: 993, hint: 'Use a Yahoo app password, not your normal password.' },
+  'Company or hosting mailbox': { host: '', port: 993, hint: 'Your email provider or IT team can give you the IMAP server address. It is often mail.yourcompany.com.' },
+};
+
+function ClaimsInbox({ freePlan }: { freePlan: boolean }) {
+  const [inbox, setInbox] = useState<Inbox | null>(null);
+  const [provider, setProvider] = useState('Gmail');
+  const [form, setForm] = useState({ host: providers.Gmail.host, port: '993', user: '', password: '', mailbox: 'INBOX' });
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState('');
+
+  useEffect(() => {
+    const load = () => api<Inbox>('/settings/inbox').then(setInbox, (err) => setError(err.message));
+    void load();
+    const timer = setInterval(load, 15_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const set = (key: keyof typeof form) => (event: { target: { value: string } }) => setForm({ ...form, [key]: event.target.value });
+  const choose = (name: string) => {
+    setProvider(name);
+    setForm({ ...form, host: providers[name].host, port: String(providers[name].port) });
+  };
+  const edit = () => {
+    if (inbox?.connected) {
+      setProvider('Company or hosting mailbox');
+      setForm({ host: inbox.host, port: String(inbox.port), user: inbox.user, password: '', mailbox: inbox.mailbox });
+    }
+    setEditing(true);
+  };
+  const run = async (action: () => Promise<Inbox>, message: string) => {
+    setBusy(true);
+    setError('');
+    setSaved('');
+    try {
+      setInbox(await action());
+      setSaved(message);
+      setEditing(false);
+      setForm((current) => ({ ...current, password: '' }));
+    } catch (err) {
+      setError((err as Error).message);
+    }
+    setBusy(false);
+  };
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    await run(() => api('/settings/inbox', { method: 'PUT', body: { ...form, port: Number(form.port) } }), 'Connected. New email is now being watched.');
+  }
+
+  return (
+    <Sheet title="Claims inbox">
+      <div className="grid gap-3">
+        <p className="text-small text-muted">New email in this mailbox is checked every minute. Attachments land on the matching claim, or open a new one, and are read automatically.</p>
+        {freePlan && <Notice><strong>Connect a test mailbox only.</strong> Everything attached to email here goes to a free AI plan, where the provider's reviewers may read it. Do not connect a mailbox that receives real claims.</Notice>}
+        {error && <Notice tone="danger">{error}</Notice>}
+        {saved && <Notice tone="ok">{saved}</Notice>}
+        {inbox?.connected && !editing && (
+          <>
+            <dl className="grid gap-x-6 gap-y-2.5 text-small sm:grid-cols-2">
+              <div><dt className="text-caption text-muted">Mailbox</dt><dd className="break-words font-medium">{inbox.user}</dd></div>
+              <div><dt className="text-caption text-muted">Folder</dt><dd className="font-medium">{inbox.mailbox}</dd></div>
+              <div><dt className="text-caption text-muted">Watching mail since</dt><dd className="font-medium">{formatTime(inbox.connectedAt)}</dd></div>
+              <div><dt className="text-caption text-muted">Last checked</dt><dd className="font-medium">{inbox.lastCheck ? `${formatTime(inbox.lastCheck)}, ${inbox.lastAdded} added` : 'First check is under way'}</dd></div>
+            </dl>
+            {inbox.lastError && <Notice tone="danger">{inbox.lastError}</Notice>}
+            <p className="text-caption text-muted">Emails are marked as read once they are saved here. Older mail is left alone.</p>
+            <div className="flex flex-wrap gap-2">
+              <Button busy={busy} onClick={() => void run(() => api('/settings/inbox/check', { method: 'POST' }), 'Checked.')}>Check now</Button>
+              <Button onClick={edit}>Change details</Button>
+              <Button variant="danger" onClick={() => { if (window.confirm('Stop watching this mailbox? Claims already created are kept.')) void run(() => api('/settings/inbox', { method: 'DELETE' }), 'Disconnected.'); }}>Disconnect</Button>
+            </div>
+          </>
+        )}
+        {inbox && (!inbox.connected || editing) && (
+          <form className="grid gap-3 sm:grid-cols-2" onSubmit={submit}>
+            <Field label="Email provider" hint={providers[provider].hint}>
+              <select className={inputClass} value={provider} onChange={(e) => choose(e.target.value)}>
+                {Object.keys(providers).map((name) => <option key={name}>{name}</option>)}
+              </select>
+            </Field>
+            <Field label="Mail server (IMAP)"><input required className={inputClass} value={form.host} onChange={set('host')} /></Field>
+            <Field label="Mailbox email address"><input required type="email" autoComplete="off" className={inputClass} value={form.user} onChange={set('user')} /></Field>
+            <Field label={inbox.connected ? 'Password' : 'Password or app password'} hint={inbox.connected ? 'Leave blank to keep the saved one.' : 'Stored encrypted, and never shown again.'}>
+              <input type="password" autoComplete="new-password" required={!inbox.connected} className={inputClass} value={form.password} onChange={set('password')} />
+            </Field>
+            <Field label="Folder to watch"><input required className={inputClass} value={form.mailbox} onChange={set('mailbox')} /></Field>
+            <Field label="Port" hint="Almost always 993."><input required type="number" className={inputClass} value={form.port} onChange={set('port')} /></Field>
+            <p className="text-caption text-muted sm:col-span-2">Microsoft 365 usually blocks password sign-in like this. If yours does, forward claims to a separate mailbox and connect that one.</p>
+            <div className="flex flex-wrap gap-2 sm:col-span-2">
+              <Button type="submit" variant="main" busy={busy}>Test and connect</Button>
+              {editing && <Button onClick={() => setEditing(false)}>Cancel</Button>}
+            </div>
+          </form>
+        )}
+      </div>
     </Sheet>
   );
 }

@@ -37,6 +37,8 @@ export const config = {
   freeAiPlan: provider === 'gemini' && process.env.GEMINI_PAID !== 'true',
   maxFileBytes: 25 * 1024 * 1024,
   maxPortalDocuments: 40,
+  // Only for tests against a local mail server. Real mailboxes always use TLS.
+  allowPlainInbox: process.env.INBOX_ALLOW_PLAIN === 'true',
   smtp: process.env.SMTP_HOST
     ? {
         host: process.env.SMTP_HOST,
@@ -45,16 +47,6 @@ export const config = {
         pass: process.env.SMTP_PASS,
         from: process.env.SMTP_FROM || process.env.SMTP_USER || '',
         secure: process.env.SMTP_SECURE === 'true',
-      }
-    : null,
-  imap: process.env.IMAP_HOST
-    ? {
-        host: process.env.IMAP_HOST,
-        port: Number(process.env.IMAP_PORT || 993),
-        user: process.env.IMAP_USER || '',
-        pass: process.env.IMAP_PASS || '',
-        mailbox: process.env.IMAP_MAILBOX || 'INBOX',
-        secure: process.env.IMAP_SECURE !== 'false',
       }
     : null,
 };

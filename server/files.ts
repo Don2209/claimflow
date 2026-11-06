@@ -31,6 +31,20 @@ export function readFile(id: string): Buffer {
   return Buffer.concat([decipher.update(stored.subarray(28)), decipher.final()]);
 }
 
+export function encryptText(text: string): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', config.key, iv);
+  const body = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), body]).toString('base64');
+}
+
+export function decryptText(stored: string): string {
+  const raw = Buffer.from(stored, 'base64');
+  const decipher = createDecipheriv('aes-256-gcm', config.key, raw.subarray(0, 12));
+  decipher.setAuthTag(raw.subarray(12, 28));
+  return Buffer.concat([decipher.update(raw.subarray(28)), decipher.final()]).toString('utf8');
+}
+
 export const deleteFile = (id: string) => rmSync(pathFor(id), { force: true });
 
 /** Phone photos can be too large for the AI and sideways. This straightens and shrinks a copy; the original is kept as received. */

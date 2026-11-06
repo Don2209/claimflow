@@ -13,10 +13,9 @@
     "skipLibCheck": true,
     "noEmit": true,
     "resolveJsonModule": true,
-    "baseUrl": ".",
     "paths": {
       "@locale": ["./src/i18n/locales/en.ts"],
-      "@/*": ["src/*"]
+      "@/*": ["./src/*"]
     },
     "types": ["vite/client", "node"]
   },

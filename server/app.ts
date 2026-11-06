@@ -9,7 +9,7 @@ import { checklistFor, claimDetail, claimRow, createClaim, portalLink, stageLabe
 import { config } from './config.ts';
 import { all, audit, get, now, run, setSetting, setting, type Row } from './db.ts';
 import { documentTypes } from './doctypes.ts';
-import { inbox, sendEmail } from './email.ts';
+import { checkInboxNow, connectInbox, disconnectInbox, inboxView, sendEmail } from './email.ts';
 import { readFile } from './files.ts';
 import { addDocument, FileRejected, pump, refreshRuleChecks, removeDocument, reviewFile, scheduleReview } from './pipeline.ts';
 import { claimsCsv, dashboard, workbook } from './reports.ts';
@@ -149,7 +149,6 @@ staff.get('/meta', (c) => c.json({
   aiName: config.provider === 'gemini' ? "Google's Gemini" : "Anthropic's Claude",
   freeAiPlan: config.freeAiPlan,
   sending: Boolean(config.smtp),
-  inbox: config.imap ? { address: config.imap.user, lastCheck: inbox.lastCheck, lastError: inbox.lastError } : null,
 }));
 
 const claimById = (id: string) => get('SELECT * FROM claims WHERE id = ?', id);
@@ -418,6 +417,34 @@ staff.put('/settings', requireManager, async (c) => {
   setSetting('retention_days', String(retentionDays));
   audit(c.get('user').name, 'Changed retention period', null, retentionDays ? `${retentionDays} days` : 'Keep until deleted');
   return c.json({ retentionDays });
+});
+
+staff.get('/settings/inbox', requireManager, (c) => c.json(inboxView()));
+
+staff.put('/settings/inbox', requireManager, async (c) => {
+  const input = z.object({
+    host: z.string().trim().min(3, 'Enter the mail server address.').max(200),
+    port: z.number().int().min(1).max(65535),
+    user: z.string().trim().min(3, 'Enter the mailbox email address.').max(200),
+    password: z.string().max(500),
+    mailbox: z.string().trim().min(1, 'Enter the folder to watch.').max(200),
+  }).parse(await c.req.json());
+  const problem = await connectInbox(input);
+  if (problem) return c.json({ error: problem }, 400);
+  audit(c.get('user').name, 'Connected claims inbox', null, input.user);
+  return c.json(inboxView());
+});
+
+staff.post('/settings/inbox/check', requireManager, async (c) => {
+  await checkInboxNow();
+  audit(c.get('user').name, 'Checked claims inbox');
+  return c.json(inboxView());
+});
+
+staff.delete('/settings/inbox', requireManager, (c) => {
+  disconnectInbox();
+  audit(c.get('user').name, 'Disconnected claims inbox');
+  return c.json(inboxView());
 });
 
 staff.post('/settings/test-ai', requireManager, async (c) => {

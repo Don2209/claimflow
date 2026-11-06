@@ -16,6 +16,7 @@ import { Desk } from './pages/Desk';
 import { Login } from './pages/Login';
 import { NewClaim } from './pages/NewClaim';
 import { Portal } from './pages/Portal';
+import { PublicClaim } from './pages/PublicClaim';
 import { Settings } from './pages/Settings';
 import { SummaryPage } from './pages/SummaryPage';
 import { Team } from './pages/Team';
@@ -50,6 +51,7 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <Routes>
+        <Route path="/claim" element={<PublicClaim />} />
         <Route path="/upload/:token" element={<Portal />} />
         <Route path="/*" element={<Staff />} />
       </Routes>

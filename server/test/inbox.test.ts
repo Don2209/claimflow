@@ -98,6 +98,8 @@ test('connecting processes only new mail with attachments, and never exposes the
 
   const messages = mailServer.storage.INBOX.messages;
   const seen = (id: string) => messages.find((m: any) => m.raw.toString().includes(`<${id}@x>`)).flags.includes('\\Seen');
+  // The first check runs in the background, and marks each email as read once it is saved.
+  for (let i = 0; i < 100 && !(seen('new') && seen('chatter')); i += 1) await new Promise((resolve) => setTimeout(resolve, 50));
   assert.equal(seen('old'), false, 'older mail is left alone');
   assert.equal(seen('new'), true);
   assert.equal(seen('chatter'), true);

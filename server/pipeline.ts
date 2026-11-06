@@ -122,7 +122,7 @@ export async function reviewFile(claimId: string) {
       classes_available: classes.map((c) => c.name),
       entered_by_handler: {
         claimant: claim.claimant_name, policy_number: claim.policy_number, vehicle_registration: claim.vehicle_reg,
-        loss_date: claim.loss_date, policy_start: claim.policy_start, policy_end: claim.policy_end,
+        loss_date: claim.loss_date, policy_start: claim.policy_start, policy_end: claim.policy_end, notes: claim.notes,
       },
       documents: done.map((doc) => ({
         document_id: doc.id, file: doc.filename, type: documentTypes[doc.doc_type] ?? doc.doc_type, fields: JSON.parse(doc.fields_json),

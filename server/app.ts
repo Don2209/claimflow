@@ -90,6 +90,7 @@ app.post('/api/logout', (c) => {
 const portalClaim = (c: Context) => get('SELECT * FROM claims WHERE portal_token = ? AND handed_over_at IS NULL', c.req.param('token'));
 const portalView = (claim: Row) => ({
   ref: claim.ref,
+  testOnly: config.freeAiPlan,
   checklist: checklistFor(claim).map((item) => ({ label: item.label, required: item.required, received: item.documentIds.length > 0 })),
   reading: get("SELECT COUNT(*) AS n FROM documents WHERE claim_id = ? AND status IN ('queued','reading')", claim.id)!.n,
   received: get('SELECT COUNT(*) AS n FROM documents WHERE claim_id = ?', claim.id)!.n,
@@ -124,6 +125,42 @@ app.post('/api/portal/:token/documents', async (c) => {
   const count = get('SELECT COUNT(*) AS n FROM documents WHERE claim_id = ?', claim.id)!.n;
   if (count >= config.maxPortalDocuments) return c.json({ error: 'This claim has reached its upload limit. Contact the claims team.' }, 429);
   return takeUploads(c, claim, 'portal', 'Upload link');
+});
+
+// ---- The public page where a client starts their own claim. Anyone can reach it, so it has limits. ----
+const SELF_SERVICE = 'Client self-service';
+const CLAIMS_PER_HOUR_PER_ADDRESS = 5;
+const CLAIMS_PER_DAY = 100;
+const recentStarts = new Map<string, number[]>();
+
+app.get('/api/public/claim-form', (c) => c.json({ classes: all('SELECT id, name FROM classes ORDER BY name'), testOnly: config.freeAiPlan }));
+
+app.post('/api/public/claims', async (c) => {
+  const body = z.object({
+    claimant_name: z.string().trim().min(2, 'Enter your full name.').max(200),
+    contact_email: z.string().trim().email('Enter a valid email address.'),
+    class_id: z.string().nullable(),
+    policy_number: z.string().trim().max(100),
+    vehicle_reg: z.string().trim().max(40),
+    loss_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Enter the date it happened.'),
+    notes: z.string().trim().max(2000),
+    consent: z.literal(true, { errorMap: () => ({ message: 'Please tick the box so we can process your documents.' }) }),
+    website: z.string().max(0, 'Something went wrong. Try again.'),
+  }).parse(await c.req.json());
+  if (body.class_id && !get('SELECT 1 AS x FROM classes WHERE id = ?', body.class_id)) return c.json({ error: 'Choose the type of claim from the list.' }, 400);
+
+  const address = (c.req.header('x-forwarded-for') ?? 'unknown').split(',')[0].trim();
+  const hourAgo = Date.now() - 3600_000;
+  const starts = (recentStarts.get(address) ?? []).filter((at) => at > hourAgo);
+  const today = get('SELECT COUNT(*) AS n FROM claims WHERE created_by = ? AND created_at > ?', SELF_SERVICE, new Date(Date.now() - 864e5).toISOString())!.n;
+  if (starts.length >= CLAIMS_PER_HOUR_PER_ADDRESS || today >= CLAIMS_PER_DAY) {
+    return c.json({ error: 'Too many claims have been started. Try again later, or contact the claims team.' }, 429);
+  }
+  recentStarts.set(address, [...starts, Date.now()]);
+
+  const { claimant_name, contact_email, class_id, policy_number, vehicle_reg, loss_date, notes } = body;
+  const claim = createClaim({ claimant_name, contact_email, class_id, policy_number, vehicle_reg, loss_date, notes, source: SELF_SERVICE }, SELF_SERVICE);
+  return c.json({ token: claim.portal_token }, 201);
 });
 
 // ---- Everything below needs a signed-in member of staff. ----

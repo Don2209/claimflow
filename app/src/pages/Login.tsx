@@ -37,6 +37,7 @@ export function Login({ onSignedIn }: { onSignedIn: (user: User) => void }) {
             <input className={inputClass} type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
           </Field>
           <Button type="submit" variant="main" busy={busy} className="w-full">Sign in</Button>
+          <p className="text-center text-small">Making a claim? <a className="text-link font-semibold" href="/claim">Start it here</a></p>
         </div>
       </form>
     </main>

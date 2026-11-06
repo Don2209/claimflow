@@ -10,6 +10,7 @@ export function Settings() {
     <>
       <PageTitle title="Settings" />
       <div className="grid max-w-3xl gap-4">
+        <ClientPage />
         {user.role === 'manager' && (
           <>
             <Connections meta={meta} />
@@ -20,6 +21,21 @@ export function Settings() {
         <Password />
       </div>
     </>
+  );
+}
+
+function ClientPage() {
+  const link = `${window.location.origin}/claim`;
+  const [copied, setCopied] = useState(false);
+  return (
+    <Sheet title="Client claim page">
+      <p className="mb-3 text-small text-muted">Clients start a claim and upload documents here themselves, with no sign-in. Their claim appears on your desk and is read automatically.</p>
+      <p className="mb-3 break-all text-small font-semibold">{link}</p>
+      <div className="flex flex-wrap gap-2">
+        <Button onClick={() => void navigator.clipboard.writeText(link).then(() => setCopied(true))}>{copied ? 'Link copied' : 'Copy link'}</Button>
+        <a href={link} target="_blank" rel="noreferrer"><Button tabIndex={-1}>Open page</Button></a>
+      </div>
+    </Sheet>
   );
 }
 

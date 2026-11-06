@@ -145,7 +145,7 @@ export function ClaimFile() {
                 {[
                   ['Claimant', claim.claimantName], ['Class', claim.className], ['Policy number', claim.policyNumber], ['Registration', claim.vehicleReg],
                   ['Date of loss', claim.lossDate], ['Policy period', claim.policyStart || claim.policyEnd ? `${claim.policyStart || '?'} to ${claim.policyEnd || '?'}` : ''],
-                  ['Broker or branch', claim.source], ['Email for requests', claim.contactEmail], ['Opened', `${formatDate(claim.createdAt)} by ${claim.createdBy}`],
+                  ['Broker or branch', claim.source], ['Email for requests', claim.contactEmail], ['Notes', claim.notes], ['Opened', `${formatDate(claim.createdAt)} by ${claim.createdBy}`],
                 ].map(([label, value]) => (
                   <div key={label} className="min-w-0"><dt className="text-caption text-muted">{label}</dt><dd className="break-words font-medium">{value || 'Not known yet'}</dd></div>
                 ))}

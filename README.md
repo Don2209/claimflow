@@ -152,6 +152,7 @@ The product itself lives in `server/` (API, database, AI) and `app/` (the screen
 - **Move to real use:** in `render.yaml`, set `plan: starter`, add a `disk` mounted at `/var/data` with `DATA_DIR=/var/data`, and use a paid AI plan: `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` with `GEMINI_PAID=true`. Keep a safe copy of the encryption key.
 - **After deploying:** sign in, then open Settings and press "Test the AI connection". Then open a claim using the fictional documents in `samples/motor-claim/`.
 - **Run it locally:** run `npm run server:dev` and `npm run product:dev`, then open http://localhost:5180. The first sign-in details are printed in the server's terminal unless you set `ADMIN_EMAIL` and `ADMIN_PASSWORD`. `npm run product:build` then `npm start` runs the built version.
+- **Clients:** `/claim` is the public page where a client starts a claim with no sign-in, then uploads through that claim's private link. It allows 5 new claims an hour per address and 100 a day.
 - **Settings:** `.env.product.example` lists them. Email sending is optional, and switches on when its settings are added. A manager connects the claims inbox in the app, under Settings.
 - **Tests:** `npm test` runs the whole system against a stand-in AI service, so it proves the plumbing, not the quality of the AI's reading.
 - **Storage:** one SQLite database and one folder of encrypted documents under `DATA_DIR`. It runs one server for one insurer. A second insurer gets its own deployment.

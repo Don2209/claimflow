@@ -1,0 +1,27 @@
+# One-click hosting: https://render.com/deploy?repo=https://github.com/Don2209/claimflow
+services:
+  - type: web
+    name: claimsflow
+    runtime: node
+    region: frankfurt
+    plan: starter
+    buildCommand: npm ci --include=dev && npm run product:build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    disk:
+      name: claimsflow-data
+      mountPath: /var/data
+      sizeGB: 5
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: DATA_DIR
+        value: /var/data
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        generateValue: true
+      - key: DATA_ENCRYPTION_KEY
+        generateValue: true

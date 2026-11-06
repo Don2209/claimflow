@@ -1,0 +1,72 @@
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
+export async function api<T = any>(path: string, options: { method?: string; body?: unknown } = {}): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`/api${path}`, {
+      method: options.method ?? (options.body === undefined ? 'GET' : 'POST'),
+      headers: options.body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    });
+  } catch {
+    throw new ApiError('Could not reach ClaimsFlow. Check your connection and try again.', 0);
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ApiError(data.error ?? 'Something went wrong. Try again.', res.status);
+  return data as T;
+}
+
+/** Sends files and reports progress, because phone photos on a slow connection can take a while. */
+export function uploadFiles(url: string, files: File[], onProgress: (share: number) => void): Promise<{ added: string[]; rejected: string[] }> {
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    files.forEach((file) => form.append('files', file));
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/api${url}`);
+    xhr.upload.onprogress = (event) => event.lengthComputable && onProgress(event.loaded / event.total);
+    xhr.onerror = () => reject(new ApiError('The upload stopped. Check your connection and try again.', 0));
+    xhr.onload = () => {
+      let data: any = {};
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {
+        // The error below covers an unreadable reply.
+      }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+      else reject(new ApiError(data.error ?? 'The upload failed. Try again.', xhr.status));
+    };
+    xhr.send(form);
+  });
+}
+
+export type Field = { key: string; label: string; value: string; page: number; quote: string; confidence: string; corrected?: boolean };
+export type Doc = {
+  id: string; filename: string; mime: string; size: number; origin: string; status: string; error: string;
+  docType: string | null; typeLabel: string | null; typeSetBy: string | null; confidence: string | null; language: string;
+  handwritten: boolean; description: string; issues: string[]; fields: Field[]; createdAt: string;
+};
+export type Flag = { id: string; origin: string; severity: string; title: string; detail: string; documentIds: string[]; status: string; note: string; resolvedBy: string | null };
+export type Claim = {
+  id: string; ref: string; classId: string | null; className: string | null; claimantName: string; contactEmail: string;
+  policyNumber: string; vehicleReg: string; policyStart: string; policyEnd: string; lossDate: string; source: string; notes: string;
+  stage: string; stageLabel: string; portalLink: string;
+  summary: null | { overview: string; parties: { role: string; name: string }[]; dates: { label: string; value: string; document_id: string }[]; amounts: { label: string; value: string; document_id: string }[] };
+  draft: { subject: string; body: string; sentAt: string | null };
+  analysisStatus: string; analysisError: string; analysedAt: string | null; handedOverAt: string | null; createdBy: string; createdAt: string;
+  checklist: { type: string; label: string; required: boolean; documentIds: string[] }[]; documents: Doc[]; flags: Flag[];
+};
+export type ClaimRow = {
+  id: string; ref: string; claimantName: string; policyNumber: string; vehicleReg: string; source: string; className: string | null;
+  stage: string; stageLabel: string; createdAt: string; updatedAt: string; documents: number; missing: string[]; openFlags: number;
+};
+export type Meta = {
+  documentTypes: Record<string, string>; stages: Record<string, string>; classes: { id: string; name: string }[]; ai: boolean; sending: boolean;
+  inbox: null | { address: string; lastCheck: string | null; lastError: string | null };
+};
+export type User = { id: string; email: string; name: string; role: 'manager' | 'handler'; active: boolean };

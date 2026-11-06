@@ -48,7 +48,7 @@ export const capabilities: Capability[] = [
     title: 'Or through a secure portal',
     lead: 'Brokers and claimants can see what you need.',
     bullets: [
-      'They enter a policy or claim reference and see your checklist.',
+      'They open a private link for that claim and see your checklist.',
       'They upload files, and phone photos are fine.',
       'Items tick off as documents land, so nobody has to phone and ask.',
     ],

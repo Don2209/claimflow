@@ -1,0 +1,321 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  /* Metric-matched fallback so the swap to Instrument Sans does not shift layout. */
+  font-family: 'Instrument Fallback';
+  src: local('Arial');
+  size-adjust: 96%;
+  ascent-override: 102%;
+  descent-override: 26%;
+}
+
+@layer base {
+  /* Colours come from Harare in October: jacaranda bloom, number-plate yellow, the handler's red pen. */
+  :root,
+  .daylight {
+    --canvas: 251 249 255;
+    --surface: 255 255 255;
+    --sunken: 238 232 252;
+    --line: 220 212 240;
+    --line-strong: 120 108 156;
+    --fg: 23 18 43;
+    --muted: 82 74 108;
+    --primary: 255 203 5;
+    --primary-hover: 255 183 0;
+    --on-primary: 23 18 43;
+    --accent: 84 50 184;
+    --ok: 8 112 88;
+    --ok-soft: 216 244 233;
+    --warn: 133 79 0;
+    --warn-soft: 255 241 204;
+    --danger: 190 30 24;
+    --danger-soft: 253 228 225;
+    --paper: 255 255 253;
+    --paper-ink: 34 30 50;
+    --pen: 200 33 27;
+    color-scheme: light;
+  }
+
+  /* `.ink` forces the dark values on one band of a light page. */
+  .dark,
+  .ink {
+    --canvas: 34 20 74;
+    --surface: 48 32 98;
+    --sunken: 23 13 54;
+    --line: 78 60 134;
+    --line-strong: 136 120 186;
+    --fg: 250 248 255;
+    --muted: 204 195 232;
+    --primary: 255 203 5;
+    --primary-hover: 255 222 89;
+    --on-primary: 23 18 43;
+    --accent: 255 203 5;
+    --ok: 94 226 178;
+    --ok-soft: 14 62 52;
+    --warn: 255 203 90;
+    --warn-soft: 70 52 10;
+    --danger: 255 156 146;
+    --danger-soft: 84 28 36;
+    --paper: 255 255 253;
+    --paper-ink: 34 30 50;
+    color-scheme: dark;
+  }
+
+  /* In dark mode an ink band still has to read as a separate band. */
+  .dark {
+    --canvas: 17 10 40;
+    --surface: 30 19 66;
+  }
+
+  .dark .ink {
+    --canvas: 34 20 74;
+    --surface: 48 32 98;
+  }
+
+  /* `.sun` is the number-plate yellow band. It stays yellow in dark mode. */
+  .sun {
+    --canvas: 255 203 5;
+    --surface: 255 255 255;
+    --sunken: 255 226 110;
+    --line: 23 18 43;
+    --line-strong: 23 18 43;
+    --fg: 23 18 43;
+    --muted: 52 42 40;
+    --primary: 23 18 43;
+    --primary-hover: 54 36 110;
+    --on-primary: 255 203 5;
+    --accent: 84 50 184;
+    --ok: 8 112 88;
+    --ok-soft: 216 244 233;
+    --warn: 133 79 0;
+    --warn-soft: 255 241 204;
+    --danger: 190 30 24;
+    --danger-soft: 253 228 225;
+    color-scheme: light;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-padding-top: 5rem;
+  }
+
+  body {
+    @apply bg-canvas text-body text-fg antialiased;
+    font-feature-settings: 'ss01' off;
+    overflow-x: clip;
+  }
+
+  .ink,
+  .sun {
+    @apply bg-canvas text-fg;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-weight: 600;
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--accent));
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
+  }
+}
+
+@layer components {
+  .text-link {
+    @apply font-medium text-accent underline decoration-1 underline-offset-[3px] transition-colors hover:decoration-2;
+  }
+
+  /* A sheet of paper. Stays paper-coloured in dark mode, because it is a document. */
+  .sheet {
+    @apply relative overflow-hidden rounded-[2px] bg-paper text-paper-ink shadow-paper;
+  }
+
+  /* A photo printed for the claim file: white border, slightly crooked, with room for a note. */
+  .print {
+    @apply bg-paper p-2 text-paper-ink shadow-window sm:p-3;
+    rotate: var(--tilt, 0deg);
+  }
+
+  @media (hover: hover) and (prefers-reduced-motion: no-preference) {
+    /* Straighten a crooked print when someone looks at it. */
+    .print {
+      transition: rotate 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    .print:hover {
+      rotate: 0deg;
+    }
+  }
+
+  /* The handler's red pen. */
+  .pen {
+    @apply font-hand font-normal;
+    color: rgb(var(--pen));
+    font-size: clamp(1.625rem, 1.4rem + 0.7vw, 2.25rem);
+    line-height: 1.05;
+  }
+
+  /* A rubber stamp. Capitals here are the object itself, not a label style. */
+  .stamp {
+    @apply inline-block rounded-[3px] font-display font-extrabold uppercase;
+    border: 3px solid rgb(var(--pen));
+    color: rgb(var(--pen));
+    padding: 0.25em 0.6em;
+    line-height: 1.05;
+    letter-spacing: 0.03em;
+  }
+
+  .hero-scrim {
+    background:
+      linear-gradient(0deg, rgb(34 20 74 / 0.92) 0%, rgb(34 20 74 / 0) 45%),
+      linear-gradient(
+        90deg,
+        rgb(34 20 74 / 0.9) 0%,
+        rgb(34 20 74 / 0.62) 50%,
+        rgb(34 20 74 / 0.12) 100%
+      );
+  }
+
+  /* On narrow screens the text covers the whole photo, so the scrim has to as well. */
+  @media (max-width: 1023px) {
+    .hero-scrim {
+      background: linear-gradient(0deg, rgb(34 20 74 / 0.94) 0%, rgb(34 20 74 / 0.74) 100%);
+    }
+  }
+
+  .photo-scrim {
+    background: linear-gradient(
+      0deg,
+      rgb(23 13 54 / 0.94) 0%,
+      rgb(23 13 54 / 0.55) 50%,
+      rgb(23 13 54 / 0.15) 100%
+    );
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer utilities {
+  .text-display-xl,
+  .text-display-lg,
+  .text-display-md,
+  .text-display-sm {
+    font-family: theme('fontFamily.display');
+    font-weight: 800;
+    overflow-wrap: anywhere;
+  }
+
+  /* Ethiopic letters are much wider than the condensed Latin headline face. */
+  html[lang='am'] .text-display-xl {
+    font-size: clamp(2.75rem, 1.8rem + 4.6vw, 6.5rem);
+    line-height: 1.15;
+  }
+
+  html[lang='am'] .text-display-lg {
+    font-size: clamp(2.25rem, 1.6rem + 2.8vw, 4.5rem);
+    line-height: 1.15;
+  }
+
+  .beat-waiting {
+    opacity: 0;
+  }
+
+  /* Reveal used by the small "how it works" animations; see useInView. */
+  .step-in {
+    animation: step-in 480ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+    animation-delay: calc(var(--i, 0) * 260ms + 150ms);
+  }
+
+  .scan-line {
+    animation: scan 1s ease-in-out infinite alternate;
+  }
+
+  /* The one orchestrated moment: the claim file lands on the page as it loads. */
+  .land {
+    animation: land 620ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    animation-delay: calc(var(--i, 0) * 240ms + 200ms);
+  }
+
+  .thump {
+    animation: thump 340ms cubic-bezier(0.3, 1.4, 0.5, 1) both;
+    animation-delay: 1100ms;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .step-in,
+    .scan-line,
+    .land,
+    .thump {
+      animation: none;
+    }
+
+    *,
+    *::before,
+    *::after {
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@keyframes step-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes scan {
+  from {
+    top: 4%;
+  }
+  to {
+    top: 92%;
+  }
+}
+
+@keyframes land {
+  from {
+    opacity: 0;
+    translate: 0 -48px;
+    scale: 1.08;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+    scale: 1;
+  }
+}
+
+@keyframes thump {
+  from {
+    opacity: 0;
+    scale: 1.7;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}

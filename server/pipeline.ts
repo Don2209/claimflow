@@ -13,11 +13,16 @@ const reviewAgain = new Set<string>();
 
 export class FileRejected extends Error {}
 
-export function addDocument(claim: Row, filename: string, data: Buffer, origin: string, actor: string): Row {
+export function checkUpload(filename: string, data: Buffer): string {
   if (data.length > config.maxFileBytes) throw new FileRejected(`${filename} is larger than 25 MB.`);
   if (!data.length) throw new FileRejected(`${filename} is empty.`);
-  const mime = detectFileType(data);
-  if (!mime) throw new FileRejected(`${filename} is not a PDF, JPEG, PNG or WebP file. iPhone HEIC photos need saving as JPEG first.`);
+  const mime = detectFileType(data, filename);
+  if (!mime) throw new FileRejected(`${filename} could not be opened. Send a photo, or a PDF, Word, Excel or text file, without a password.`);
+  return mime;
+}
+
+export function addDocument(claim: Row, filename: string, data: Buffer, origin: string, actor: string): Row {
+  const mime = checkUpload(filename, data);
   const id = crypto.randomUUID();
   saveFile(id, data);
   run(
@@ -138,9 +143,10 @@ export async function reviewFile(claimId: string) {
     // Fill only what nobody has entered. Anything already there is compared instead, never overwritten.
     run(
       `UPDATE claims SET claimant_name = COALESCE(NULLIF(claimant_name, ''), ?), policy_number = COALESCE(NULLIF(policy_number, ''), ?),
+       contact_email = COALESCE(NULLIF(contact_email, ''), ?), contact_phone = COALESCE(NULLIF(contact_phone, ''), ?),
        vehicle_reg = COALESCE(NULLIF(vehicle_reg, ''), ?), loss_date = COALESCE(NULLIF(loss_date, ''), ?),
        policy_start = COALESCE(NULLIF(policy_start, ''), ?), policy_end = COALESCE(NULLIF(policy_end, ''), ?), class_id = COALESCE(class_id, ?) WHERE id = ?`,
-      details.claimant_name, details.policy_number, details.vehicle_registration, details.loss_date, details.policy_start, details.policy_end, suggested, claimId,
+      details.claimant_name, details.policy_number, /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(details.contact_email) ? details.contact_email : '', details.contact_phone, details.vehicle_registration, details.loss_date, details.policy_start, details.policy_end, suggested, claimId,
     );
     claim = get('SELECT * FROM claims WHERE id = ?', claimId)!;
     const validIds = new Set(done.map((doc) => doc.id as string));

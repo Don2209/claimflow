@@ -2,7 +2,7 @@ import { type ReactNode } from 'react';
 import type { Meta } from './api';
 import { Field, inputClass } from './ui';
 
-export type ClaimValues = Record<'class_id' | 'claimant_name' | 'contact_email' | 'policy_number' | 'vehicle_reg' | 'policy_start' | 'policy_end' | 'loss_date' | 'source', string>;
+export type ClaimValues = Record<'class_id' | 'claimant_name' | 'contact_email' | 'contact_phone' | 'policy_number' | 'vehicle_reg' | 'policy_start' | 'policy_end' | 'loss_date' | 'source', string>;
 
 export function ClaimFields({ values, set, meta, children }: { values: ClaimValues; set: (key: keyof ClaimValues, value: string) => void; meta: Meta; children?: ReactNode }) {
   const text = (key: keyof ClaimValues, label: string, hint?: string, type = 'text') => (
@@ -26,9 +26,10 @@ export function ClaimFields({ values, set, meta, children }: { values: ClaimValu
       {text('policy_start', 'Policy starts', undefined, 'date')}
       {text('policy_end', 'Policy ends', undefined, 'date')}
       {text('contact_email', 'Email for requests', 'Where the missing-documents request goes.', 'email')}
+      {text('contact_phone', 'Phone')}
       {children}
     </div>
   );
 }
 
-export const emptyClaim: ClaimValues = { class_id: '', claimant_name: '', contact_email: '', policy_number: '', vehicle_reg: '', policy_start: '', policy_end: '', loss_date: '', source: '' };
+export const emptyClaim: ClaimValues = { class_id: '', claimant_name: '', contact_email: '', contact_phone: '', policy_number: '', vehicle_reg: '', policy_start: '', policy_end: '', loss_date: '', source: '' };

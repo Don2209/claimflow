@@ -76,7 +76,7 @@ test('a claim goes from upload to read, checked, flagged, summarised and drafted
 
   const added = await json(await api('POST', `/claims/${claim.id}/documents`, upload(['form.pdf', PDF('form')], ['quote.pdf', PDF('quote')], ['virus.exe', Buffer.from('MZ')])));
   assert.deepEqual(added.added, ['form.pdf', 'quote.pdf']);
-  assert.match(added.rejected[0], /not a PDF/);
+  assert.match(added.rejected[0], /could not be opened/);
 
   const done = await settled(claim.id);
   assert.equal(done.documents.every((d: any) => d.status === 'done'), true);

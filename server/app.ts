@@ -11,7 +11,7 @@ import { all, audit, get, now, run, setSetting, setting, type Row } from './db.t
 import { documentTypes } from './doctypes.ts';
 import { checkInboxNow, connectInbox, disconnectInbox, inboxView, sendEmail } from './email.ts';
 import { readFile } from './files.ts';
-import { addDocument, FileRejected, pump, refreshRuleChecks, removeDocument, reviewFile, scheduleReview } from './pipeline.ts';
+import { addDocument, checkUpload, FileRejected, pump, refreshRuleChecks, removeDocument, reviewFile, scheduleReview } from './pipeline.ts';
 import { claimsCsv, dashboard, workbook } from './reports.ts';
 import {
   checkPassword, clearFailures, createUser, endAllSessions, endSession, hashPassword, isLockedOut, noteFailure, startSession, userForSession,
@@ -92,7 +92,8 @@ const portalView = (claim: Row) => ({
   ref: claim.ref,
   testOnly: config.freeAiPlan,
   checklist: checklistFor(claim).map((item) => ({ label: item.label, required: item.required, received: item.documentIds.length > 0 })),
-  reading: get("SELECT COUNT(*) AS n FROM documents WHERE claim_id = ? AND status IN ('queued','reading')", claim.id)!.n,
+  // The review counts as reading, because it works out the type of claim and so the checklist.
+  reading: get("SELECT COUNT(*) AS n FROM documents WHERE claim_id = ? AND status IN ('queued','reading')", claim.id)!.n + (claim.analysis_status === 'running' ? 1 : 0),
   received: get('SELECT COUNT(*) AS n FROM documents WHERE claim_id = ?', claim.id)!.n,
 });
 
@@ -101,13 +102,21 @@ app.get('/api/portal/:token', (c) => {
   return claim ? c.json(portalView(claim)) : c.json({ error: 'This link is no longer active. Ask the claims team for a new one.' }, 404);
 });
 
-async function takeUploads(c: Context, claim: Row, origin: string, actor: string) {
-  const form = await c.req.parseBody({ all: true });
-  const files = ([] as unknown[]).concat(form.files ?? []).filter((file): file is File => file instanceof File);
+const filesIn = (form: Record<string, unknown>) => ([] as unknown[]).concat(form.files ?? []).filter((file): file is File => file instanceof File);
+const overLimit = (name: string) => `${name} was not added, because the upload limit was reached. Contact the claims team.`;
+const publicUploadsLeftToday = () =>
+  config.maxPublicDocumentsPerDay - get("SELECT COUNT(*) AS n FROM documents WHERE origin = 'portal' AND created_at > ?", new Date(Date.now() - 864e5).toISOString())!.n;
+
+async function takeUploads(c: Context, claim: Row, origin: string, actor: string, limit = Infinity) {
+  const files = filesIn(await c.req.parseBody({ all: true }));
   if (!files.length) return c.json({ error: 'Choose at least one file.' }, 400);
   const added: string[] = [];
   const rejected: string[] = [];
   for (const file of files) {
+    if (added.length >= limit) {
+      rejected.push(overLimit(file.name));
+      continue;
+    }
     try {
       addDocument(claim, file.name, Buffer.from(await file.arrayBuffer()), origin, actor);
       added.push(file.name);
@@ -123,8 +132,9 @@ app.post('/api/portal/:token/documents', async (c) => {
   const claim = portalClaim(c);
   if (!claim) return c.json({ error: 'This link is no longer active. Ask the claims team for a new one.' }, 404);
   const count = get('SELECT COUNT(*) AS n FROM documents WHERE claim_id = ?', claim.id)!.n;
-  if (count >= config.maxPortalDocuments) return c.json({ error: 'This claim has reached its upload limit. Contact the claims team.' }, 429);
-  return takeUploads(c, claim, 'portal', 'Upload link');
+  const room = Math.min(config.maxPortalDocuments - count, publicUploadsLeftToday());
+  if (room <= 0) return c.json({ error: 'The upload limit has been reached. Try again later, or contact the claims team.' }, 429);
+  return takeUploads(c, claim, 'portal', 'Upload link', room);
 });
 
 // ---- The public page where a client starts their own claim. Anyone can reach it, so it has limits. ----
@@ -133,34 +143,47 @@ const CLAIMS_PER_HOUR_PER_ADDRESS = 5;
 const CLAIMS_PER_DAY = 100;
 const recentStarts = new Map<string, number[]>();
 
-app.get('/api/public/claim-form', (c) => c.json({ classes: all('SELECT id, name FROM classes ORDER BY name'), testOnly: config.freeAiPlan }));
+app.get('/api/public/claim-form', (c) => c.json({ testOnly: config.freeAiPlan }));
 
+// Clients only upload. The AI takes the claim's details from the documents, and the claim exists only once a usable file has arrived.
 app.post('/api/public/claims', async (c) => {
-  const body = z.object({
-    claimant_name: z.string().trim().min(2, 'Enter your full name.').max(200),
-    contact_email: z.string().trim().email('Enter a valid email address.'),
-    class_id: z.string().nullable(),
-    policy_number: z.string().trim().max(100),
-    vehicle_reg: z.string().trim().max(40),
-    loss_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Enter the date it happened.'),
-    notes: z.string().trim().max(2000),
-    consent: z.literal(true, { errorMap: () => ({ message: 'Please tick the box so we can process your documents.' }) }),
-    website: z.string().max(0, 'Something went wrong. Try again.'),
-  }).parse(await c.req.json());
-  if (body.class_id && !get('SELECT 1 AS x FROM classes WHERE id = ?', body.class_id)) return c.json({ error: 'Choose the type of claim from the list.' }, 400);
+  const form = await c.req.parseBody({ all: true });
+  if (form.website) return c.json({ error: 'Something went wrong. Try again.' }, 400);
+  if (form.consent !== 'true') return c.json({ error: 'Please tick the box so we can process your documents.' }, 400);
+  const files = filesIn(form);
+  if (!files.length) return c.json({ error: 'Choose at least one file.' }, 400);
 
   const address = (c.req.header('x-forwarded-for') ?? 'unknown').split(',')[0].trim();
   const hourAgo = Date.now() - 3600_000;
   const starts = (recentStarts.get(address) ?? []).filter((at) => at > hourAgo);
   const today = get('SELECT COUNT(*) AS n FROM claims WHERE created_by = ? AND created_at > ?', SELF_SERVICE, new Date(Date.now() - 864e5).toISOString())!.n;
-  if (starts.length >= CLAIMS_PER_HOUR_PER_ADDRESS || today >= CLAIMS_PER_DAY) {
+  const room = Math.min(config.maxPortalDocuments, publicUploadsLeftToday());
+  if (starts.length >= CLAIMS_PER_HOUR_PER_ADDRESS || today >= CLAIMS_PER_DAY || room <= 0) {
     return c.json({ error: 'Too many claims have been started. Try again later, or contact the claims team.' }, 429);
   }
-  recentStarts.set(address, [...starts, Date.now()]);
 
-  const { claimant_name, contact_email, class_id, policy_number, vehicle_reg, loss_date, notes } = body;
-  const claim = createClaim({ claimant_name, contact_email, class_id, policy_number, vehicle_reg, loss_date, notes, source: SELF_SERVICE }, SELF_SERVICE);
-  return c.json({ token: claim.portal_token }, 201);
+  const usable: { name: string; data: Buffer }[] = [];
+  const rejected: string[] = [];
+  for (const file of files) {
+    if (usable.length >= room) {
+      rejected.push(overLimit(file.name));
+      continue;
+    }
+    const data = Buffer.from(await file.arrayBuffer());
+    try {
+      checkUpload(file.name, data);
+      usable.push({ name: file.name, data });
+    } catch (error) {
+      if (!(error instanceof FileRejected)) throw error;
+      rejected.push(error.message);
+    }
+  }
+  if (!usable.length) return c.json({ error: rejected.join(' ') }, 400);
+
+  recentStarts.set(address, [...starts, Date.now()]);
+  const claim = createClaim({ source: SELF_SERVICE }, SELF_SERVICE);
+  for (const { name, data } of usable) addDocument(claim, name, data, 'portal', 'Upload link');
+  return c.json({ token: claim.portal_token, rejected }, 201);
 });
 
 // ---- Everything below needs a signed-in member of staff. ----
@@ -202,7 +225,7 @@ staff.get('/claims', (c) => {
 
 const date = z.string().regex(/^(\d{4}-\d{2}-\d{2})?$/, 'Use a full date.');
 const ClaimInput = z.object({
-  class_id: z.string().nullable(), claimant_name: z.string().max(200), contact_email: z.union([z.literal(''), z.string().email('Enter a valid email address.')]),
+  class_id: z.string().nullable(), claimant_name: z.string().max(200), contact_email: z.union([z.literal(''), z.string().email('Enter a valid email address.')]), contact_phone: z.string().max(40),
   policy_number: z.string().max(100), vehicle_reg: z.string().max(40), policy_start: date, policy_end: date, loss_date: date,
   source: z.string().max(200), notes: z.string().max(4000),
 }).partial();
@@ -313,7 +336,8 @@ staff.get('/documents/:id/file', (c) => {
   const name = doc.filename.replace(/[^\w.\- ]/g, '_');
   return c.body(new Uint8Array(readFile(doc.id)), 200, {
     'Content-Type': doc.mime,
-    'Content-Disposition': `inline; filename="${name}"`,
+    // Browsers can show these. Anything else downloads, to open in Word or Excel.
+    'Content-Disposition': `${/^(application\/pdf|image\/(jpeg|png|webp)|text\/plain)$/.test(doc.mime) ? 'inline' : 'attachment'}; filename="${name}"`,
     'Cache-Control': 'private, no-store',
     'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; object-src 'self'; frame-ancestors 'self'",
   });

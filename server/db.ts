@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS checklist_items (
 CREATE TABLE IF NOT EXISTS claims (
   id TEXT PRIMARY KEY, seq INTEGER NOT NULL, ref TEXT UNIQUE NOT NULL,
   class_id TEXT REFERENCES classes(id),
-  claimant_name TEXT NOT NULL DEFAULT '', contact_email TEXT NOT NULL DEFAULT '',
+  claimant_name TEXT NOT NULL DEFAULT '', contact_email TEXT NOT NULL DEFAULT '', contact_phone TEXT NOT NULL DEFAULT '',
   policy_number TEXT NOT NULL DEFAULT '', vehicle_reg TEXT NOT NULL DEFAULT '',
   policy_start TEXT NOT NULL DEFAULT '', policy_end TEXT NOT NULL DEFAULT '', loss_date TEXT NOT NULL DEFAULT '',
   source TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
@@ -56,6 +56,11 @@ CREATE TABLE IF NOT EXISTS audit (
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS emails_seen (message_id TEXT PRIMARY KEY, claim_ref TEXT, at TEXT NOT NULL);
 `);
+
+// Databases created before phone numbers were kept.
+if (!db.prepare('PRAGMA table_info(claims)').all().some((column) => column.name === 'contact_phone')) {
+  db.exec("ALTER TABLE claims ADD COLUMN contact_phone TEXT NOT NULL DEFAULT ''");
+}
 
 export type Row = Record<string, any>;
 export const all = (sql: string, ...args: any[]): Row[] => db.prepare(sql).all(...args) as Row[];

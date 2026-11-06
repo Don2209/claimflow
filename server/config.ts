@@ -37,6 +37,8 @@ export const config = {
   freeAiPlan: provider === 'gemini' && process.env.GEMINI_PAID !== 'true',
   maxFileBytes: 25 * 1024 * 1024,
   maxPortalDocuments: 40,
+  // Anyone can upload without signing in and each file costs an AI call, so this caps the daily bill.
+  maxPublicDocumentsPerDay: Number(process.env.PUBLIC_DOCUMENTS_PER_DAY || 500),
   // Only for tests against a local mail server. Real mailboxes always use TLS.
   allowPlainInbox: process.env.INBOX_ALLOW_PLAIN === 'true',
   smtp: process.env.SMTP_HOST

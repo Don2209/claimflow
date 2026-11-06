@@ -23,9 +23,10 @@ export async function api<T = any>(path: string, options: { method?: string; bod
 }
 
 /** Sends files and reports progress, because phone photos on a slow connection can take a while. */
-export function uploadFiles(url: string, files: File[], onProgress: (share: number) => void): Promise<{ added: string[]; rejected: string[] }> {
+export function uploadFiles<T = { added: string[]; rejected: string[] }>(url: string, files: File[], onProgress: (share: number) => void, fields: Record<string, string> = {}): Promise<T> {
   return new Promise((resolve, reject) => {
     const form = new FormData();
+    Object.entries(fields).forEach(([name, value]) => form.append(name, value));
     files.forEach((file) => form.append('files', file));
     const xhr = new XMLHttpRequest();
     xhr.open('POST', `/api${url}`);
@@ -53,7 +54,7 @@ export type Doc = {
 };
 export type Flag = { id: string; origin: string; severity: string; title: string; detail: string; documentIds: string[]; status: string; note: string; resolvedBy: string | null };
 export type Claim = {
-  id: string; ref: string; classId: string | null; className: string | null; claimantName: string; contactEmail: string;
+  id: string; ref: string; classId: string | null; className: string | null; claimantName: string; contactEmail: string; contactPhone: string;
   policyNumber: string; vehicleReg: string; policyStart: string; policyEnd: string; lossDate: string; source: string; notes: string;
   stage: string; stageLabel: string; portalLink: string;
   summary: null | { overview: string; parties: { role: string; name: string }[]; dates: { label: string; value: string; document_id: string }[]; amounts: { label: string; value: string; document_id: string }[] };

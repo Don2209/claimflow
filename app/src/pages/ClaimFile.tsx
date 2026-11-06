@@ -145,7 +145,7 @@ export function ClaimFile() {
                 {[
                   ['Claimant', claim.claimantName], ['Class', claim.className], ['Policy number', claim.policyNumber], ['Registration', claim.vehicleReg],
                   ['Date of loss', claim.lossDate], ['Policy period', claim.policyStart || claim.policyEnd ? `${claim.policyStart || '?'} to ${claim.policyEnd || '?'}` : ''],
-                  ['Broker or branch', claim.source], ['Email for requests', claim.contactEmail], ['Notes', claim.notes], ['Opened', `${formatDate(claim.createdAt)} by ${claim.createdBy}`],
+                  ['Broker or branch', claim.source], ['Email for requests', claim.contactEmail], ['Phone', claim.contactPhone], ['Notes', claim.notes], ['Opened', `${formatDate(claim.createdAt)} by ${claim.createdBy}`],
                 ].map(([label, value]) => (
                   <div key={label} className="min-w-0"><dt className="text-caption text-muted">{label}</dt><dd className="break-words font-medium">{value || 'Not known yet'}</dd></div>
                 ))}
@@ -294,7 +294,7 @@ function RequestEmail({ claim, missing, sending, setData, setError, setNotice }:
 
 function EditDetails({ claim, meta, onSaved }: { claim: Claim; meta: ShellContext['meta']; onSaved: (claim: Claim) => void }) {
   const [values, setValues] = useState<ClaimValues>({
-    class_id: claim.classId ?? '', claimant_name: claim.claimantName, contact_email: claim.contactEmail, policy_number: claim.policyNumber,
+    class_id: claim.classId ?? '', claimant_name: claim.claimantName, contact_email: claim.contactEmail, contact_phone: claim.contactPhone, policy_number: claim.policyNumber,
     vehicle_reg: claim.vehicleReg, policy_start: claim.policyStart, policy_end: claim.policyEnd, loss_date: claim.lossDate, source: claim.source,
   });
   const [busy, setBusy] = useState(false);
@@ -339,7 +339,16 @@ function DocPanel({ doc, meta, onClose, onChange }: { doc: Doc; meta: ShellConte
           <div className="h-[55dvh] bg-sunken md:h-full">
             {doc.mime === 'application/pdf'
               ? <iframe key={page} title={doc.filename} src={`${src}#page=${page}`} className="size-full" />
-              : <img src={src} alt={doc.description || doc.filename} className="size-full object-contain" />}
+              : doc.mime === 'text/plain'
+                ? <iframe title={doc.filename} src={src} className="size-full bg-white" />
+                : /^image\/(jpeg|png|webp)$/.test(doc.mime)
+                  ? <img src={src} alt={doc.description || doc.filename} className="size-full object-contain" />
+                  : (
+                    <div className="grid h-full place-content-center gap-3 p-6 text-center">
+                      <p className="text-small">This file can't be shown here. The details found in it are alongside.</p>
+                      <div><a href={src} download={doc.filename} className="font-semibold text-accent underline">Download {doc.filename}</a></div>
+                    </div>
+                  )}
           </div>
           <div className="grid content-start gap-4 p-4 md:overflow-auto">
             {error && <Notice tone="danger">{error}</Notice>}

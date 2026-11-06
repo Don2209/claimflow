@@ -43,9 +43,9 @@ export function createClaim(input: Partial<Record<string, string | null>>, actor
   const id = crypto.randomUUID();
   const stamp = now();
   run(
-    `INSERT INTO claims (id, seq, ref, class_id, claimant_name, contact_email, policy_number, vehicle_reg, policy_start, policy_end, loss_date, source, notes, portal_token, created_by, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    id, seq, ref, input.class_id || null, input.claimant_name || '', input.contact_email || '', input.policy_number || '',
+    `INSERT INTO claims (id, seq, ref, class_id, claimant_name, contact_email, contact_phone, policy_number, vehicle_reg, policy_start, policy_end, loss_date, source, notes, portal_token, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    id, seq, ref, input.class_id || null, input.claimant_name || '', input.contact_email || '', input.contact_phone || '', input.policy_number || '',
     input.vehicle_reg || '', input.policy_start || '', input.policy_end || '', input.loss_date || '', input.source || '', input.notes || '',
     crypto.randomUUID().replaceAll('-', '') + crypto.randomUUID().replaceAll('-', ''), actor, stamp, stamp,
   );
@@ -179,7 +179,7 @@ export function claimDetail(claim: Row) {
   }));
   const className = claim.class_id ? get('SELECT name FROM classes WHERE id = ?', claim.class_id)?.name : null;
   return {
-    id: claim.id, ref: claim.ref, classId: claim.class_id, className, claimantName: claim.claimant_name, contactEmail: claim.contact_email,
+    id: claim.id, ref: claim.ref, classId: claim.class_id, className, claimantName: claim.claimant_name, contactEmail: claim.contact_email, contactPhone: claim.contact_phone,
     policyNumber: claim.policy_number, vehicleReg: claim.vehicle_reg, policyStart: claim.policy_start, policyEnd: claim.policy_end,
     lossDate: claim.loss_date, source: claim.source, notes: claim.notes, stage: stageOf(claim), stageLabel: stageLabels[stageOf(claim)],
     portalLink: portalLink(claim), summary: claim.summary_json ? JSON.parse(claim.summary_json) : null,

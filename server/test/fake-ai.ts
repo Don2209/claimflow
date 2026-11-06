@@ -79,7 +79,7 @@ function reading(body: any) {
 function review() {
   return {
     flags: [{ title: 'Quote is dated before the loss', detail: 'The quote predates the accident.', severity: 'note', document_ids: [] }],
-    claim_details: { claimant_name: 'Farai Specimen', policy_number: 'SMPL-POL-7731', vehicle_registration: '', loss_date: '2026-09-01', policy_start: '', policy_end: '' },
+    claim_details: { claimant_name: 'Farai Specimen', contact_email: 'farai@example.com', contact_phone: '+263 77 000 0000', policy_number: 'SMPL-POL-7731', vehicle_registration: '', loss_date: '2026-09-01', policy_start: '', policy_end: '' },
     suggested_class: 'Motor comprehensive',
     summary: {
       overview: 'A motor accident claim. The police report is outstanding.',

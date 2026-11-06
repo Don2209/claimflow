@@ -120,7 +120,7 @@ export function useLoad<T>(load: () => Promise<T>, deps: unknown[] = []) {
   return { data, setData, error, reload };
 }
 
-export function DropZone({ onFiles, busy, progress, label, capture }: { onFiles: (files: File[]) => void; busy?: boolean; progress?: number; label: string; capture?: boolean }) {
+export function DropZone({ onFiles, busy, disabled, progress, label, capture }: { onFiles: (files: File[]) => void; busy?: boolean; disabled?: boolean; progress?: number; label: string; capture?: boolean }) {
   const [over, setOver] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   return (
@@ -133,7 +133,7 @@ export function DropZone({ onFiles, busy, progress, label, capture }: { onFiles:
       onDrop={(event) => {
         event.preventDefault();
         setOver(false);
-        if (!busy) onFiles([...event.dataTransfer.files]);
+        if (!busy && !disabled) onFiles([...event.dataTransfer.files]);
       }}
       className={cn('rounded-md border-2 border-dashed p-5 text-center transition-colors', over ? 'border-accent bg-sunken' : 'border-line-strong/50')}
     >
@@ -142,7 +142,7 @@ export function DropZone({ onFiles, busy, progress, label, capture }: { onFiles:
         type="file"
         multiple
         hidden
-        accept=".pdf,image/jpeg,image/png,image/webp"
+        accept=".pdf,image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif,.doc,.docx,.xlsx,.txt,.csv"
         aria-label={label}
         onChange={(event) => {
           onFiles([...(event.target.files ?? [])]);
@@ -158,11 +158,11 @@ export function DropZone({ onFiles, busy, progress, label, capture }: { onFiles:
         </div>
       ) : (
         <>
-          <Button variant="main" onClick={() => input.current?.click()}>
+          <Button variant="main" disabled={disabled} onClick={() => input.current?.click()}>
             <Upload className="size-4" aria-hidden="true" /> {label}
           </Button>
           <p className="mt-2 text-caption text-muted">
-            {capture ? 'Take photos or choose files. ' : 'Or drop files here. '}PDF, JPEG, PNG or WebP, up to 25 MB each.
+            {capture ? 'Take photos or choose files. ' : 'Or drop files here. '}Photos, PDF, Word, Excel or text files, up to 25 MB each.
           </p>
         </>
       )}

@@ -118,7 +118,7 @@ These describe commitments the business has to stand behind. They came from the 
 
 ## Deploying
 
-The live site is at https://don2209.github.io/claimflow/, on GitHub Pages. Run `npm run deploy:pages` to build it and publish it to the `gh-pages` branch. That branch holds generated files only, and each deploy replaces it.
+The live site is at https://don2209.github.io/claimflow/, on GitHub Pages. Run `npm run deploy:pages` to build it and publish it to the `gh-pages` branch. That branch holds generated files only, and each deploy adds a commit to it.
 
 For any other host, run `npm run build`, then publish `dist/`. With your own domain, set `VITE_SITE_URL` and leave `VITE_SITE_BASE` empty.
 

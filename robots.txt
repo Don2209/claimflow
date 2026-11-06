@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://don2209.github.io/claimflow/sitemap.xml

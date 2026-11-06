@@ -17,6 +17,9 @@ function encryptionKey(): Buffer {
   return createHash('sha256').update(readFileSync(path, 'utf8')).digest();
 }
 
+// Gemini when its key is set, unless AI_PROVIDER says otherwise.
+const provider = process.env.AI_PROVIDER === 'anthropic' || !process.env.GEMINI_API_KEY ? 'anthropic' : 'gemini';
+
 const publicUrl = (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:8787').replace(/\/$/, '');
 
 export const config = {
@@ -25,8 +28,13 @@ export const config = {
   publicUrl,
   secureCookies: publicUrl.startsWith('https://'),
   key: encryptionKey(),
-  model: process.env.CLAIMSFLOW_MODEL || 'claude-opus-5-5',
-  aiConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
+  provider,
+  model: process.env.CLAIMSFLOW_MODEL || (provider === 'gemini' ? 'gemini-3.6-flash' : 'claude-opus-5-5'),
+  // Tried in turn when a free Gemini model is busy or hangs.
+  geminiBackups: ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'],
+  aiConfigured: Boolean(provider === 'gemini' ? process.env.GEMINI_API_KEY : process.env.ANTHROPIC_API_KEY),
+  // Free Gemini content can be read by Google's reviewers, so the app warns about real documents. Set GEMINI_PAID=true on a paid plan.
+  freeAiPlan: provider === 'gemini' && process.env.GEMINI_PAID !== 'true',
   maxFileBytes: 25 * 1024 * 1024,
   maxPortalDocuments: 40,
   smtp: process.env.SMTP_HOST

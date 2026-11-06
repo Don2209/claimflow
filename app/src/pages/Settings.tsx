@@ -31,7 +31,7 @@ function Connections({ meta }: { meta: ShellContext['meta'] }) {
       <dl className="grid gap-3 text-small">
         <div>
           <dt className="font-semibold">AI reading</dt>
-          <dd>{status(meta.ai, 'Key added', 'No key yet')}. Each document is sent to Anthropic's Claude to be read.
+          <dd>{status(meta.ai, 'Key added', 'No key yet')}. Each document is sent to {meta.aiName} to be read.
           <div className="mt-2"><Button busy={busy} onClick={() => { setBusy(true); void api('/settings/test-ai', { method: 'POST' }).then(setResult).catch((err) => setResult({ ok: false, message: err.message })).finally(() => setBusy(false)); }}>Test the AI connection</Button></div>
           {result && <div className="mt-2"><Notice tone={result.ok ? 'ok' : 'danger'}>{result.message}</Notice></div>}
           </dd>

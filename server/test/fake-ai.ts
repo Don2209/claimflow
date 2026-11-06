@@ -3,12 +3,28 @@ import { createServer } from 'node:http';
 /** Stands in for the AI service in tests. It checks the shape of each request, and returns fixed answers. It says nothing about AI quality. */
 export function startFakeAi(port: number) {
   const requests: any[] = [];
+  let limitNext = 0;
   const server = createServer((req, res) => {
     let raw = '';
     req.on('data', (chunk) => (raw += chunk));
     req.on('end', () => {
       const body = JSON.parse(raw);
-      requests.push({ headers: req.headers, body });
+      if (!req.url?.includes(':generateContent')) requests.push({ headers: req.headers, body });
+      if (req.url?.includes(':generateContent')) {
+        requests.push({ gemini: true, url: req.url, headers: req.headers, body });
+        if (limitNext > 0) {
+          limitNext -= 1;
+          res.writeHead(429, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: { code: 429, message: 'Quota exceeded', status: 'RESOURCE_EXHAUSTED' } }));
+          return;
+        }
+        const instruction = String(body.systemInstruction?.parts?.[0]?.text ?? body.systemInstruction ?? '');
+        const parts = body.contents[0].parts;
+        const answer = instruction.includes('review an insurance claim file') ? review() : reading({ messages: [{ content: parts }] });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ text: JSON.stringify(answer) }] } }] }));
+        return;
+      }
       if (!body.stream) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ id: 'msg_0', type: 'message', role: 'assistant', model: body.model, content: [{ type: 'text', text: 'OK' }], stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } }));
@@ -31,7 +47,7 @@ export function startFakeAi(port: number) {
     });
   });
   server.listen(port);
-  return { requests, close: () => server.close() };
+  return { requests, limitNextRequests: (count: number) => (limitNext = count), close: () => server.close() };
 }
 
 const field = (key: string, label: string, value: string) => ({ key, label, value, page: 1, quote: value, confidence: 'high' });

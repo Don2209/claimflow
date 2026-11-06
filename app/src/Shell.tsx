@@ -71,6 +71,13 @@ export function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }
               </Notice>
             </div>
           )}
+          {meta?.freeAiPlan && (
+            <div className="mb-5">
+              <Notice>
+                <strong>Demo mode: fictional documents only.</strong> This runs on a free AI plan, where the AI provider's reviewers may read what is uploaded. Do not upload real claims.
+              </Notice>
+            </div>
+          )}
           {meta && <Outlet context={{ user, meta, reloadMeta } satisfies ShellContext} />}
         </div>
       </main>

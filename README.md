@@ -148,7 +148,8 @@ Design tokens are CSS variables in `src/styles/index.css`, exposed to Tailwind i
 
 The product itself lives in `server/` (API, database, AI) and `app/` (the screens). The website above is separate.
 
-- **Host it:** open https://render.com/deploy?repo=https://github.com/Don2209/claimflow and fill in `ANTHROPIC_API_KEY` and `ADMIN_EMAIL`. Render creates `ADMIN_PASSWORD` and `DATA_ENCRYPTION_KEY`, and shows them under Environment. Keep a safe copy of the encryption key.
+- **Host it for demos, free:** open https://render.com/deploy?repo=https://github.com/Don2209/claimflow and fill in `GEMINI_API_KEY` and `ADMIN_EMAIL`. Render creates `ADMIN_PASSWORD` and `DATA_ENCRYPTION_KEY`, and shows them under Environment. The free plan has no permanent storage, so claims disappear when the app restarts, and it sleeps when idle. Free Gemini content may be read by Google's reviewers, so upload fictional documents only.
+- **Move to real use:** in `render.yaml`, set `plan: starter`, add a `disk` mounted at `/var/data` with `DATA_DIR=/var/data`, and use a paid AI plan: `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` with `GEMINI_PAID=true`. Keep a safe copy of the encryption key.
 - **After deploying:** sign in, then open Settings and press "Test the AI connection". Then open a claim using the fictional documents in `samples/motor-claim/`.
 - **Run it locally:** run `npm run server:dev` and `npm run product:dev`, then open http://localhost:5180. The first sign-in details are printed in the server's terminal unless you set `ADMIN_EMAIL` and `ADMIN_PASSWORD`. `npm run product:build` then `npm start` runs the built version.
 - **Settings:** `.env.product.example` lists them. Email sending and inbox collection are optional, and switch on when their settings are added.

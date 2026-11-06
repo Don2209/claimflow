@@ -66,7 +66,7 @@ export type ClaimRow = {
   stage: string; stageLabel: string; createdAt: string; updatedAt: string; documents: number; missing: string[]; openFlags: number;
 };
 export type Meta = {
-  documentTypes: Record<string, string>; stages: Record<string, string>; classes: { id: string; name: string }[]; ai: boolean; sending: boolean;
+  documentTypes: Record<string, string>; stages: Record<string, string>; classes: { id: string; name: string }[]; ai: boolean; aiName: string; freeAiPlan: boolean; sending: boolean;
   inbox: null | { address: string; lastCheck: string | null; lastError: string | null };
 };
 export type User = { id: string; email: string; name: string; role: 'manager' | 'handler'; active: boolean };

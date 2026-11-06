@@ -146,6 +146,8 @@ staff.get('/meta', (c) => c.json({
   stages: stageLabels,
   classes: all('SELECT id, name FROM classes ORDER BY name'),
   ai: config.aiConfigured,
+  aiName: config.provider === 'gemini' ? "Google's Gemini" : "Anthropic's Claude",
+  freeAiPlan: config.freeAiPlan,
   sending: Boolean(config.smtp),
   inbox: config.imap ? { address: config.imap.user, lastCheck: inbox.lastCheck, lastError: inbox.lastError } : null,
 }));
@@ -426,7 +428,7 @@ staff.post('/settings/test-ai', requireManager, async (c) => {
   } catch (error) {
     console.error(error);
     const status = (error as { status?: number }).status;
-    return c.json({ ok: false, message: status === 401 ? 'The key was refused. Check it and add it again.' : `The AI could not be reached${status ? ` (error ${status})` : ''}.` });
+    return c.json({ ok: false, message: status === 401 || status === 403 ? 'The key was refused. Check it and add it again.' : `The AI could not be reached${status ? ` (error ${status})` : ''}.` });
   }
 });
 

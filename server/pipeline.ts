@@ -5,7 +5,8 @@ import { all, audit, get, now, run, type Row } from './db.ts';
 import { documentTypes } from './doctypes.ts';
 import { deleteFile, detectFileType, readFile, saveFile, sha256 } from './files.ts';
 
-const MAX_AT_ONCE = 3;
+// One at a time on the free AI plan, which limits requests per minute.
+const MAX_AT_ONCE = config.freeAiPlan ? 1 : 3;
 let running = 0;
 const reviewing = new Set<string>();
 const reviewAgain = new Set<string>();
@@ -78,8 +79,9 @@ async function read(doc: Row) {
 function friendly(error: unknown): string {
   console.error(error);
   const status = (error as { status?: number }).status;
-  if (status === 401) return 'The AI key was refused. A manager needs to check it.';
-  if (status === 429) return 'The AI is busy or the account limit was reached. Try again shortly.';
+  if (status === 401 || status === 403) return 'The AI key was refused. A manager needs to check it.';
+  if (status === 429) return 'The AI usage limit was reached. Wait a while, then press Read again.';
+  if ((error as Error).name === 'AbortError' || (error as Error).name === 'TimeoutError') return 'The AI took too long to answer. Try again shortly.';
   if (status && status >= 500) return 'The AI service had a problem. Try again shortly.';
   if (status === 400) return 'The AI could not accept this file. It may be damaged or password-protected.';
   return error instanceof Error ? error.message.slice(0, 300) : 'Reading failed.';
@@ -109,6 +111,7 @@ export async function reviewFile(claimId: string) {
   reviewing.add(claimId);
   run("UPDATE claims SET analysis_status = 'running', analysis_error = '' WHERE id = ?", claimId);
   try {
+    refreshRuleChecks(claimId);
     let claim = get('SELECT * FROM claims WHERE id = ?', claimId)!;
     const classes = all('SELECT id, name FROM classes');
     const outstanding = checklistFor(claim).filter((item) => item.required && !item.documentIds.length).map((item) => item.label);
@@ -126,6 +129,7 @@ export async function reviewFile(claimId: string) {
       })),
       outstanding_documents: outstanding,
       documents_with_reading_problems: unreadable,
+      already_flagged_do_not_repeat: all("SELECT title, detail FROM flags WHERE claim_id = ? AND origin = 'rule'", claimId),
       already_dismissed_by_handler_do_not_raise_again: all("SELECT title, note FROM flags WHERE claim_id = ? AND status = 'dismissed'", claimId),
     });
 

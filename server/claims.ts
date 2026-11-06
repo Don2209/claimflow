@@ -1,6 +1,7 @@
 import { all, audit, get, now, run, type Row } from './db.ts';
 import { documentTypes } from './doctypes.ts';
 import { config } from './config.ts';
+import { addUp, buildInsights } from './insights.ts';
 
 export function checklistFor(claim: Row) {
   const items = claim.class_id ? all('SELECT doc_type, required FROM checklist_items WHERE class_id = ? ORDER BY position', claim.class_id) : [];
@@ -127,6 +128,20 @@ export function ruleFlags(claim: Row): NewFlag[] {
     }
   }
 
+  for (const doc of all("SELECT id, filename, fields_json, line_items_json FROM documents WHERE claim_id = ? AND status = 'done' AND doc_type IN ('repair_quote','invoice','receipt')", claim.id)) {
+    const total = JSON.parse(doc.fields_json).find((field: Row) => field.key === 'amount_total' && field.value)?.value ?? '';
+    const check = addUp(JSON.parse(doc.line_items_json), total);
+    if (check && !check.matches) {
+      flags.push({
+        key: `rule:adds-up:${doc.id}:${check.sum.value}:${check.total.value}`,
+        severity: 'attention',
+        title: `The figures on ${doc.filename} do not add up`,
+        detail: `Its items add up to ${check.sum.currency} ${check.sum.value.toFixed(2)}, but its total says ${check.total.currency} ${check.total.value.toFixed(2)}.`,
+        documentIds: [doc.id],
+      });
+    }
+  }
+
   for (const key of ['quote_number', 'invoice_number']) {
     for (const field of fields.get(key) ?? []) {
       const value = digitsAndLetters(field.value);
@@ -171,8 +186,9 @@ export function claimDetail(claim: Row) {
     id: doc.id, filename: doc.filename, mime: doc.mime, size: doc.size, origin: doc.origin, status: doc.status, error: doc.error,
     docType: doc.doc_type, typeLabel: doc.doc_type ? documentTypes[doc.doc_type] ?? doc.doc_type : null, typeSetBy: doc.type_set_by,
     confidence: doc.confidence, language: doc.language, handwritten: Boolean(doc.handwritten), description: doc.description,
-    issues: JSON.parse(doc.issues_json), fields: JSON.parse(doc.fields_json), createdAt: doc.created_at,
+    issues: JSON.parse(doc.issues_json), fields: JSON.parse(doc.fields_json), lineItems: JSON.parse(doc.line_items_json), createdAt: doc.created_at,
   }));
+  const summary = claim.summary_json ? JSON.parse(claim.summary_json) : null;
   const flags = all('SELECT * FROM flags WHERE claim_id = ? ORDER BY status, severity, created_at', claim.id).map((flag) => ({
     id: flag.id, origin: flag.origin, severity: flag.severity, title: flag.title, detail: flag.detail,
     documentIds: JSON.parse(flag.document_ids), status: flag.status, note: flag.note, resolvedBy: flag.resolved_by,
@@ -182,7 +198,12 @@ export function claimDetail(claim: Row) {
     id: claim.id, ref: claim.ref, classId: claim.class_id, className, claimantName: claim.claimant_name, contactEmail: claim.contact_email, contactPhone: claim.contact_phone,
     policyNumber: claim.policy_number, vehicleReg: claim.vehicle_reg, policyStart: claim.policy_start, policyEnd: claim.policy_end,
     lossDate: claim.loss_date, source: claim.source, notes: claim.notes, stage: stageOf(claim), stageLabel: stageLabels[stageOf(claim)],
-    portalLink: portalLink(claim), summary: claim.summary_json ? JSON.parse(claim.summary_json) : null,
+    portalLink: portalLink(claim), summary,
+    insights: buildInsights(
+      { vehicleReg: claim.vehicle_reg, lossDate: claim.loss_date, policyStart: claim.policy_start, policyEnd: claim.policy_end, createdAt: claim.created_at },
+      documents.map((doc) => ({ ...doc, docType: doc.docType ?? null })),
+      summary,
+    ),
     draft: { subject: claim.draft_subject, body: claim.draft_body, sentAt: claim.draft_sent_at },
     analysisStatus: claim.analysis_status, analysisError: claim.analysis_error, analysedAt: claim.analysed_at,
     handedOverAt: claim.handed_over_at, createdBy: claim.created_by, createdAt: claim.created_at, updatedAt: claim.updated_at,

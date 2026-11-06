@@ -50,14 +50,30 @@ export type Field = { key: string; label: string; value: string; page: number; q
 export type Doc = {
   id: string; filename: string; mime: string; size: number; origin: string; status: string; error: string;
   docType: string | null; typeLabel: string | null; typeSetBy: string | null; confidence: string | null; language: string;
-  handwritten: boolean; description: string; issues: string[]; fields: Field[]; createdAt: string;
+  handwritten: boolean; description: string; issues: string[]; fields: Field[]; lineItems: { description: string; amount: string }[]; createdAt: string;
 };
 export type Flag = { id: string; origin: string; severity: string; title: string; detail: string; documentIds: string[]; status: string; note: string; resolvedBy: string | null };
+export type Quote = {
+  documentId: string; filename: string; supplier: string; number: string; date: string; totalText: string; itemCount: number; addsUp: boolean | null; sumText: string;
+  registration: string; vehicleMatches: boolean | null; leavesOut: string[]; onlyThisOne: string[]; readingIssues: string[];
+};
+export type Insights = {
+  comparison: { quotes: Quote[]; rows: { work: string; prices: { document_id: string; amount: string }[] }[]; suggestion: { documentId: string; reasons: string[] } | null; noSuggestion: string };
+  value: { text: string; source: string };
+  sumInsured: { text: string; over: boolean } | null;
+  cover: { state: 'inside' | 'early' | 'outside' | 'unknown'; text: string };
+  timeline: { date: string; labels: string[]; documentId: string; isLoss: boolean; daysAfterPrevious: number | null }[];
+  daysToOpen: number | null;
+  recheck: { documentId: string; filename: string; issues: string[] }[];
+  languages: string[];
+  handwritten: number;
+};
 export type Claim = {
   id: string; ref: string; classId: string | null; className: string | null; claimantName: string; contactEmail: string; contactPhone: string;
   policyNumber: string; vehicleReg: string; policyStart: string; policyEnd: string; lossDate: string; source: string; notes: string;
   stage: string; stageLabel: string; portalLink: string;
-  summary: null | { overview: string; parties: { role: string; name: string }[]; dates: { label: string; value: string; document_id: string }[]; amounts: { label: string; value: string; document_id: string }[] };
+  summary: null | { overview: string; parties: { role: string; name: string }[]; dates: { label: string; value: string; document_id: string }[]; amounts: { label: string; value: string; document_id: string }[]; next_steps?: string[] };
+  insights: Insights;
   draft: { subject: string; body: string; sentAt: string | null };
   analysisStatus: string; analysisError: string; analysedAt: string | null; handedOverAt: string | null; createdBy: string; createdAt: string;
   checklist: { type: string; label: string; required: boolean; documentIds: string[] }[]; documents: Doc[]; flags: Flag[];

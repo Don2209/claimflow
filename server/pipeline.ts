@@ -69,9 +69,9 @@ async function read(doc: Row) {
     // Someone's correction outranks the AI, including when a document is read again.
     const stillAi = !doc.type_set_by || doc.type_set_by === 'ai';
     run(
-      `UPDATE documents SET status = 'done', error = '', doc_type = ?, type_set_by = ?, confidence = ?, language = ?, handwritten = ?, description = ?, issues_json = ?, fields_json = ? WHERE id = ?`,
+      `UPDATE documents SET status = 'done', error = '', doc_type = ?, type_set_by = ?, confidence = ?, language = ?, handwritten = ?, description = ?, issues_json = ?, fields_json = ?, line_items_json = ? WHERE id = ?`,
       stillAi ? docType : doc.doc_type, stillAi ? 'ai' : doc.type_set_by, reading.confidence, reading.language, reading.handwritten ? 1 : 0,
-      reading.description, JSON.stringify(reading.issues), JSON.stringify(reading.fields), doc.id,
+      reading.description, JSON.stringify(reading.issues), JSON.stringify(reading.fields), JSON.stringify(reading.line_items), doc.id,
     );
     audit('ClaimsFlow AI', 'Read document', claim.ref, `${doc.filename}: ${documentTypes[docType]}`);
   } catch (error) {
@@ -130,7 +130,7 @@ export async function reviewFile(claimId: string) {
         loss_date: claim.loss_date, policy_start: claim.policy_start, policy_end: claim.policy_end, notes: claim.notes,
       },
       documents: done.map((doc) => ({
-        document_id: doc.id, file: doc.filename, type: documentTypes[doc.doc_type] ?? doc.doc_type, fields: JSON.parse(doc.fields_json),
+        document_id: doc.id, file: doc.filename, type: documentTypes[doc.doc_type] ?? doc.doc_type, fields: JSON.parse(doc.fields_json), line_items: JSON.parse(doc.line_items_json),
       })),
       outstanding_documents: outstanding,
       documents_with_reading_problems: unreadable,
@@ -160,7 +160,7 @@ export async function reviewFile(claimId: string) {
     if (!claim.draft_edited) {
       run('UPDATE claims SET draft_subject = ?, draft_body = ? WHERE id = ?', review.request.subject, review.request.body, claimId);
     }
-    run("UPDATE claims SET summary_json = ?, analysis_status = 'done', analysed_at = ?, updated_at = ? WHERE id = ?", JSON.stringify(review.summary), now(), now(), claimId);
+    run("UPDATE claims SET summary_json = ?, analysis_status = 'done', analysed_at = ?, updated_at = ? WHERE id = ?", JSON.stringify({ ...review.summary, quote_rows: review.quote_rows, next_steps: review.next_steps }), now(), now(), claimId);
     audit('ClaimsFlow AI', 'Reviewed file', claim.ref, `${review.flags.length} flags raised`);
   } catch (error) {
     run("UPDATE claims SET analysis_status = 'failed', analysis_error = ? WHERE id = ?", friendly(error), claimId);

@@ -5,6 +5,7 @@ import { cn } from '@/lib/cn';
 import { api, uploadFiles, type Claim, type Doc, type Flag } from '../api';
 import { ClaimFields, type ClaimValues } from '../ClaimForm';
 import type { ShellContext } from '../Shell';
+import { QuoteCompare } from '../QuoteCompare';
 import { Button, DropZone, Field, formatDate, formatTime, inputClass, Loading, Notice, Sheet, StageStamp, useLoad } from '../ui';
 
 export function ClaimFile() {
@@ -68,7 +69,7 @@ export function ClaimFile() {
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <StageStamp stage={claim.stage} label={claim.stageLabel} large />
-          <Link to={`/claims/${claim.id}/summary`}><Button tabIndex={-1}><Printer className="size-4" aria-hidden="true" /> One-page summary</Button></Link>
+          <Link to={`/claims/${claim.id}/summary`}><Button tabIndex={-1}><Printer className="size-4" aria-hidden="true" /> Claim summary</Button></Link>
           <Button
             variant={claim.handedOverAt ? 'quiet' : 'main'}
             onClick={() => act(() => api(`/claims/${id}/handover`, { body: { handedOver: !claim.handedOverAt } }))}
@@ -136,6 +137,18 @@ export function ClaimFile() {
               ))}
             </ul>
           </Sheet>
+
+          {claim.insights.comparison.quotes.length > 1 && (
+            <Sheet title={`${claim.insights.comparison.quotes.length} quotes compared`}>
+              <QuoteCompare insights={claim.insights} docLink={(documentId, children) => <button type="button" className="text-left font-semibold text-accent underline" onClick={() => setOpenDoc(documentId)}>{children}</button>} />
+            </Sheet>
+          )}
+
+          {(claim.summary?.next_steps?.length ?? 0) > 0 && (
+            <Sheet title="Next steps to consider">
+              <ol className="grid list-decimal gap-1.5 pl-5 text-small">{claim.summary!.next_steps!.map((step) => <li key={step}>{step}</li>)}</ol>
+            </Sheet>
+          )}
 
           <RequestEmail claim={claim} missing={missing.map((item) => item.label)} sending={meta.sending} setData={setData} setError={setActionError} setNotice={setNotice} />
 

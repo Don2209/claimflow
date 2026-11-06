@@ -57,10 +57,10 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS emails_seen (message_id TEXT PRIMARY KEY, claim_ref TEXT, at TEXT NOT NULL);
 `);
 
-// Databases created before phone numbers were kept.
-if (!db.prepare('PRAGMA table_info(claims)').all().some((column) => column.name === 'contact_phone')) {
-  db.exec("ALTER TABLE claims ADD COLUMN contact_phone TEXT NOT NULL DEFAULT ''");
-}
+// Databases created before these columns existed.
+const hasColumn = (table: string, name: string) => db.prepare(`PRAGMA table_info(${table})`).all().some((column) => column.name === name);
+if (!hasColumn('claims', 'contact_phone')) db.exec("ALTER TABLE claims ADD COLUMN contact_phone TEXT NOT NULL DEFAULT ''");
+if (!hasColumn('documents', 'line_items_json')) db.exec("ALTER TABLE documents ADD COLUMN line_items_json TEXT NOT NULL DEFAULT '[]'");
 
 export type Row = Record<string, any>;
 export const all = (sql: string, ...args: any[]): Row[] => db.prepare(sql).all(...args) as Row[];

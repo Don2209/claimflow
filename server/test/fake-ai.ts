@@ -61,6 +61,7 @@ function reading(body: any) {
       doc_type: licence ? 'drivers_licence' : 'vehicle_registration', confidence: 'high', language: 'English', handwritten: false,
       description: licence ? "A driver's licence." : 'A vehicle registration book.', issues: [],
       fields: [licence ? field('licence_number', 'Licence number', 'SMP-DL-448120') : field('vehicle_registration', 'Registration', 'SMP 1234')],
+      line_items: [],
     };
   }
   return {
@@ -73,6 +74,7 @@ function reading(body: any) {
     fields: isQuote
       ? [field('vehicle_registration', 'Registration', 'SMP 1284'), field('quote_number', 'Quote number', 'Q-5521'), field('amount_total', 'Total', 'USD 1,250.00')]
       : [field('vehicle_registration', 'Registration', 'SMP 1234'), field('claimant_name', 'Claimant', 'Farai Specimen'), field('loss_date', 'Loss date', '2026-09-01')],
+    line_items: isQuote ? [{ description: 'Panel work', amount: 'USD 1,000.00' }, { description: 'Labour', amount: 'USD 250.00' }] : [],
   };
 }
 
@@ -87,6 +89,8 @@ function review() {
       dates: [{ label: 'Loss', value: '2026-09-01', document_id: '' }],
       amounts: [{ label: 'Repair quote', value: 'USD 1,250.00', document_id: '' }],
     },
+    quote_rows: [],
+    next_steps: ['Ask the claimant for the police report.'],
     request: { subject: 'Documents needed for your claim', body: 'Please send the police report.' },
   };
 }

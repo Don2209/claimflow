@@ -4,17 +4,18 @@ import { simpleParser } from 'mailparser';
 import nodemailer from 'nodemailer';
 import { createClaim } from './claims.ts';
 import { config } from './config.ts';
-import { all, audit, get, now, run, setSetting, setting, type Row } from './db.ts';
+import { all, audit, get, now, releaseLock, run, setSetting, setting, takeLock, type Row } from './db.ts';
+import { later } from './background.ts';
 import { decryptText, encryptText } from './files.ts';
-import { addDocument, FileRejected } from './pipeline.ts';
+import { addDocument, FileRejected, startReading } from './pipeline.ts';
 
 const compact = (value: string) => value.toUpperCase().replace(/[^A-Z0-9]/g, '');
 const MIN_INLINE_BYTES = 30 * 1024; // Smaller inline images are logos and signatures.
 
 /** A reference, policy number or registration is a strong match. A name only counts when one open claim has it. */
-export function matchClaim(text: string): Row | undefined {
+export async function matchClaim(text: string): Promise<Row | undefined> {
   const haystack = compact(text);
-  const open = all('SELECT * FROM claims WHERE handed_over_at IS NULL ORDER BY created_at DESC');
+  const open = await all('SELECT * FROM claims WHERE handed_over_at IS NULL ORDER BY created_at DESC');
   for (const key of ['ref', 'policy_number', 'vehicle_reg']) {
     const hit = open.find((claim) => claim[key] && compact(claim[key]).length >= 4 && haystack.includes(compact(claim[key])));
     if (hit) return hit;
@@ -26,35 +27,36 @@ export function matchClaim(text: string): Row | undefined {
 export async function ingestEmail(raw: Buffer): Promise<{ claimRef: string; added: number; skipped: string[] } | null> {
   const mail = await simpleParser(raw);
   const messageId = mail.messageId || `no-id:${mail.date?.toISOString()}:${mail.subject}`;
-  if (get('SELECT 1 AS x FROM emails_seen WHERE message_id = ?', messageId)) return null;
+  if (await get('SELECT 1 AS x FROM emails_seen WHERE message_id = ?', messageId)) return null;
 
   const sender = mail.from?.value[0]?.address ?? '';
   const usable = mail.attachments.filter((item) => !(item.contentDisposition === 'inline' && item.size < MIN_INLINE_BYTES));
-  const matched = matchClaim(`${mail.subject ?? ''}\n${mail.text ?? ''}`);
+  const matched = await matchClaim(`${mail.subject ?? ''}\n${mail.text ?? ''}`);
   // Newsletters and chatter should not become claims.
   if (!matched && !usable.length) {
-    audit('Claims inbox', 'Ignored email with no attachments and no matching claim', null, `From ${sender}: "${mail.subject ?? ''}"`);
-    run('INSERT INTO emails_seen (message_id, claim_ref, at) VALUES (?, ?, ?)', messageId, null, now());
+    await audit('Claims inbox', 'Ignored email with no attachments and no matching claim', null, `From ${sender}: "${mail.subject ?? ''}"`);
+    await run('INSERT INTO emails_seen (message_id, claim_ref, at) VALUES (?, ?, ?)', messageId, null, now());
     return null;
   }
   const claim =
     matched ??
-    createClaim({ contact_email: sender, source: sender.split('@')[1] ?? '', notes: `From email: ${mail.subject ?? '(no subject)'}` }, 'Claims inbox');
+    await createClaim({ contact_email: sender, source: sender.split('@')[1] ?? '', notes: `From email: ${mail.subject ?? '(no subject)'}` }, 'Claims inbox');
 
   let added = 0;
   const skipped: string[] = [];
   for (const attachment of usable) {
     const name = attachment.filename || 'attachment';
     try {
-      addDocument(claim, name, attachment.content, 'email', 'Claims inbox');
+      await addDocument(claim, name, attachment.content, 'email', 'Claims inbox');
       added += 1;
     } catch (error) {
       if (!(error instanceof FileRejected)) throw error;
       skipped.push(error.message);
     }
   }
-  audit('Claims inbox', 'Received email', claim.ref, `From ${sender}: "${mail.subject ?? ''}". ${added} added, ${skipped.length} skipped. ${skipped.join(' ')}`);
-  run('INSERT INTO emails_seen (message_id, claim_ref, at) VALUES (?, ?, ?)', messageId, claim.ref, now());
+  await audit('Claims inbox', 'Received email', claim.ref, `From ${sender}: "${mail.subject ?? ''}". ${added} added, ${skipped.length} skipped. ${skipped.join(' ')}`);
+  await run('INSERT INTO emails_seen (message_id, claim_ref, at) VALUES (?, ?, ?)', messageId, claim.ref, now());
+  if (added) startReading();
   return { claimRef: claim.ref, added, skipped };
 }
 
@@ -64,12 +66,18 @@ type Stored = Omit<InboxSettings, 'password'> & { passwordEncrypted: string; con
 
 const MAX_PER_CHECK = 20;
 const MAX_MESSAGE_BYTES = 60 * 1024 * 1024;
-const CHECK_EVERY_MS = 60_000;
+// A check longer than this was cut off, so another may start.
+const CHECK_LOCK_MS = 4 * 60_000;
+const INBOX_LOCK = 'inbox-check';
 
-const status = { lastCheck: null as string | null, lastError: null as string | null, lastAdded: 0, checking: false };
+// Kept in the database, because the next request may reach a different copy of the app.
+type Status = { lastCheck: string | null; lastError: string | null; lastAdded: number };
+const noStatus: Status = { lastCheck: null, lastError: null, lastAdded: 0 };
+const readStatus = async (): Promise<Status> => ({ ...noStatus, ...JSON.parse(await setting('inbox_status', '{}')) });
+const writeStatus = (status: Status) => setSetting('inbox_status', JSON.stringify(status));
 
-const stored = (): Stored | null => {
-  const raw = setting('inbox');
+const stored = async (): Promise<Stored | null> => {
+  const raw = await setting('inbox');
   return raw ? JSON.parse(raw) : null;
 };
 
@@ -139,7 +147,7 @@ function whyUnreachable(error: unknown): string {
 }
 
 async function checkInbox(): Promise<number> {
-  const saved = stored();
+  const saved = await stored();
   if (!saved) return 0;
   const client = connect({ ...saved, password: decryptText(saved.passwordEncrypted) });
   let added = 0;
@@ -155,7 +163,7 @@ async function checkInbox(): Promise<number> {
         // The search only works by day, so mail from earlier on the connection day is left alone here.
         if (facts.internalDate && new Date(facts.internalDate) < connectedAt) continue;
         if ((facts.size ?? 0) > MAX_MESSAGE_BYTES) {
-          audit('Claims inbox', 'Skipped an email larger than 60 MB');
+          await audit('Claims inbox', 'Skipped an email larger than 60 MB');
         } else {
           const message = await client.fetchOne(String(uid), { source: true }, { uid: true });
           if (!message || !message.source) continue;
@@ -174,30 +182,31 @@ async function checkInbox(): Promise<number> {
   return added;
 }
 
+/** Checks the mailbox once. Only one copy of the app checks at a time; the others leave it. */
 export async function checkInboxNow() {
-  if (status.checking || !stored()) return;
-  status.checking = true;
+  if (!(await stored())) return;
+  if (!(await takeLock(INBOX_LOCK, CHECK_LOCK_MS))) return;
   try {
-    status.lastAdded = await checkInbox();
-    status.lastCheck = now();
-    status.lastError = null;
+    const lastAdded = await checkInbox();
+    await writeStatus({ lastCheck: now(), lastError: null, lastAdded });
   } catch (error) {
     console.error('Inbox check failed:', error);
-    status.lastError = friendlyInboxError(error);
+    await writeStatus({ ...(await readStatus()), lastError: friendlyInboxError(error) });
   } finally {
-    status.checking = false;
+    await releaseLock(INBOX_LOCK);
   }
 }
 
-export function inboxView() {
-  const saved = stored();
+export async function inboxView() {
+  const saved = await stored();
   if (!saved) return { connected: false as const };
-  return { connected: true as const, host: saved.host, port: saved.port, user: saved.user, mailbox: saved.mailbox, connectedAt: saved.connectedAt, ...status };
+  const checking = Boolean(await get('SELECT 1 AS x FROM locks WHERE name = ? AND until > ?', INBOX_LOCK, now()));
+  return { connected: true as const, host: saved.host, port: saved.port, user: saved.user, mailbox: saved.mailbox, connectedAt: saved.connectedAt, ...(await readStatus()), checking };
 }
 
 /** Tests the details first, so a mistake is reported straight away and nothing wrong is saved. A blank password keeps the saved one. */
 export async function connectInbox(input: { host?: string; port?: number; user: string; password: string; mailbox: string }): Promise<string | null> {
-  const previous = stored();
+  const previous = await stored();
   const password = input.password || (previous && previous.user === input.user ? decryptText(previous.passwordEncrypted) : '');
   if (!password) return 'Enter the password for this mailbox.';
   const failures: string[] = [];
@@ -222,20 +231,14 @@ export async function connectInbox(input: { host?: string; port?: number; user: 
     return `ClaimsFlow could not reach the mail server. It tried ${failures.join('; ')}. If the same email works elsewhere, ask whoever hosts your mail to allow connections from ClaimsFlow's hosting, or enter the IMAP server under More options.`;
   }
   const saved: Stored = { ...found, user: input.user, mailbox: input.mailbox, passwordEncrypted: encryptText(password), connectedAt: now() };
-  setSetting('inbox', JSON.stringify(saved));
-  Object.assign(status, { lastCheck: null, lastError: null, lastAdded: 0 });
-  void checkInboxNow();
+  await setSetting('inbox', JSON.stringify(saved));
+  await writeStatus(noStatus);
+  later(checkInboxNow());
   return null;
 }
 
-export function disconnectInbox() {
-  run("DELETE FROM settings WHERE key = 'inbox'");
-  Object.assign(status, { lastCheck: null, lastError: null, lastAdded: 0 });
-}
-
-export function startInboxWatcher() {
-  const tick = () => void checkInboxNow().finally(() => setTimeout(tick, CHECK_EVERY_MS));
-  tick();
+export async function disconnectInbox() {
+  await run("DELETE FROM settings WHERE key IN ('inbox', 'inbox_status')");
 }
 
 export async function sendEmail(to: string, subject: string, text: string) {

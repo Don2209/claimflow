@@ -118,11 +118,14 @@ These describe commitments the business has to stand behind. They came from the 
 
 ## Deploying
 
-The live site is at https://don2209.github.io/claimflow/, on GitHub Pages. Run `npm run deploy:pages` to build it and publish it to the `gh-pages` branch. That branch holds generated files only, and each deploy adds a commit to it.
+The website and the app are hosted on Vercel as **two Vercel projects made from this one repository**. Both use `vercel.json`, which runs `scripts/vercel-build.mjs`. The `CLAIMSFLOW_PART` environment variable picks what a project builds, with `site` or `app`. The script writes Vercel's prebuilt output (`.vercel/output`) itself, so each project gets its own headers and routes. To check a build locally, run `CLAIMSFLOW_PART=site node scripts/vercel-build.mjs` and look in `.vercel/output`.
+
+**The website on Vercel:** add a new project in Vercel, import the repository, and add `CLAIMSFLOW_PART=site` along with the website's variables (`VITE_FORM_ENDPOINT`, and `VITE_SITE_URL` once you have your own domain). Without `VITE_SITE_URL`, canonical links use the project's production domain.
+
+The old GitHub Pages copy at https://don2209.github.io/claimflow/ still works. `npm run deploy:pages` updates it. Once the Vercel site is live, you can delete the `gh-pages` branch to retire it.
 
 For any other host, run `npm run build`, then publish `dist/`. With your own domain, set `VITE_SITE_URL` and leave `VITE_SITE_BASE` empty.
 
-- **Vercel**: import the repository. `vercel.json` sets the build and headers. Add the environment variables in project settings.
 - **Netlify**: import the repository. `netlify.toml` sets the build and headers. Add the environment variables in site settings.
 - **Other static hosting** (cPanel, S3, nginx, Apache): upload the contents of `dist/`. Serve `/path` from `/path/index.html`, serve `404.html` for missing pages, and cache `/assets/*` for a long time, since those filenames are hashed.
 
@@ -148,14 +151,29 @@ Design tokens are CSS variables in `src/styles/index.css`, exposed to Tailwind i
 
 The product itself lives in `server/` (API, database, AI) and `app/` (the screens). The website above is separate.
 
-- **Host it for demos, free:** open https://render.com/deploy?repo=https://github.com/Don2209/claimflow and fill in `GEMINI_API_KEY` and `ADMIN_EMAIL`. Render creates `ADMIN_PASSWORD` and `DATA_ENCRYPTION_KEY`, and shows them under Environment. The free plan has no permanent storage, so claims disappear when the app restarts, and it sleeps when idle. Free Gemini content may be read by Google's reviewers, so upload fictional documents only.
-- **Move to real use:** in `render.yaml`, set `plan: starter`, add a `disk` mounted at `/var/data` with `DATA_DIR=/var/data`, and use a paid AI plan: `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` with `GEMINI_PAID=true`. Keep a safe copy of the encryption key.
+- **Host it on Vercel:**
+  1. Add a second Vercel project from this repository, with `CLAIMSFLOW_PART=app`.
+  2. In the project's Storage tab, create a **private** Blob store and connect it. That adds `BLOB_READ_WRITE_TOKEN`. A public store will not work.
+  3. From the Marketplace, add **Turso** and create a database. That adds `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN`.
+  4. Add these variables:
+     - `DATA_ENCRYPTION_KEY`: a long random string. Keep a safe copy, because without it stored documents cannot be opened.
+     - `CRON_SECRET`: a random string of 16 or more characters.
+     - `ADMIN_EMAIL` and `ADMIN_PASSWORD`.
+     - An AI key: `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` with `GEMINI_PAID=true`.
+  5. Under Settings → Functions, put the function region next to the Turso database's region. For users in southern Africa, Turso's Frankfurt with Vercel's `fra1`, or Vercel's `cpt1` with the nearest Turso region, keeps every page fast.
+  6. Deploy.
+- **Plan:** Vercel's Hobby plan is for non-commercial use, so run the insurer's app on Pro. The schedule runs every minute (`CLAIMSFLOW_CRON`, default `* * * * *`), which Hobby refuses at deploy time. For a Hobby trial, set `CLAIMSFLOW_CRON=0 6 * * *`. Uploads are still read straight away, but the claims inbox is checked only once a day, and "Check now" in Settings does the rest.
+- **How it runs on Vercel:**
+  - The screens are static files on Vercel's CDN, and every `/api` request goes to one Node function (`server/vercel.ts`).
+  - Vercel refuses request bodies over 4.5 MB, so the browser sends each file straight to the private Blob store. The app then checks the file, stores an encrypted copy and deletes the original (`server/uploads.ts`).
+  - Documents are read after the reply, within the function's 300-second limit. Each minute, `/api/cron/tick` checks the inbox, reads anything still waiting, puts back work that was cut off, applies the retention period and clears abandoned uploads.
+  - Several copies of the function can run at once, so work, locks and sign-in limits live in the database, not in memory.
 - **After deploying:** sign in, then open Settings and press "Test the AI connection". Then open a claim using the fictional documents in `samples/motor-claim/`.
-- **Run it locally:** run `npm run server:dev` and `npm run product:dev`, then open http://localhost:5180. The first sign-in details are printed in the server's terminal unless you set `ADMIN_EMAIL` and `ADMIN_PASSWORD`. `npm run product:build` then `npm start` runs the built version.
+- **Run it locally:** run `npm run server:dev` and `npm run product:dev`, then open http://localhost:5180. The first sign-in details are printed in the server's terminal unless you set `ADMIN_EMAIL` and `ADMIN_PASSWORD`. `npm run product:build` then `npm start` runs the built version. Without the Turso and Blob variables, it keeps a SQLite file and the encrypted documents under `DATA_DIR`, and runs the scheduled work itself every minute.
 - **Clients:** `/claim` is the public page where a client uploads documents with no sign-in and nothing to fill in, only a consent tick. The claim opens once a usable file arrives, and the AI takes the name, contact details, class, policy and dates from the documents. More can be added through that claim's private link. It allows 5 new claims an hour per address, 100 a day, and 500 public uploads a day (`PUBLIC_DOCUMENTS_PER_DAY`).
 - **Claim summary:** `server/insights.ts` works out the quote comparison, cover dates, timeline and claim value by rules, with no AI. The AI only lines up the same work across differently worded quotes and suggests next steps. It never chooses a quote, and any price it gives that the quote doesn't show is dropped. A rule flags an invoice, receipt or quote whose lines don't add up to its total.
 - **Claims inbox:** a manager enters only the email address and password in Settings. ClaimsFlow works out the IMAP server (known providers, MX records, then `mail.` and `imap.` under the domain) and tries ports 993 and 143, requiring encryption on both. The server, port and folder can still be set under More options.
 - **File types:** PDF, JPEG, PNG, WebP, HEIC (Gemini only), Word (`.docx`, `.doc`), Excel (`.xlsx`), `.txt` and `.csv`. Pictures inside `.docx` files are read; pictures inside old `.doc` files are not.
 - **Settings:** `.env.product.example` lists them. Email sending is optional, and switches on when its settings are added. A manager connects the claims inbox in the app, under Settings.
 - **Tests:** `npm test` runs the whole system against a stand-in AI service, so it proves the plumbing, not the quality of the AI's reading.
-- **Storage:** one SQLite database and one folder of encrypted documents under `DATA_DIR`. It runs one server for one insurer. A second insurer gets its own deployment.
+- **Storage:** one database (Turso on Vercel, or a SQLite file locally) and the encrypted documents (a private Vercel Blob store, or a folder under `DATA_DIR`). Each insurer gets its own deployment.

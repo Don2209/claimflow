@@ -1,12 +1,14 @@
-import { DatabaseSync } from 'node:sqlite';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import type { Client, InStatement, InValue } from '@libsql/client';
 import { config } from './config.ts';
 import { startingChecklists } from './doctypes.ts';
 
-export const db = new DatabaseSync(join(config.dataDir, 'claimsflow.db'));
-db.exec(`PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;`);
-
-db.exec(`
+/**
+ * Turso (libSQL) when TURSO_DATABASE_URL is set, as on Vercel. Otherwise a SQLite file under DATA_DIR, for running locally and for tests.
+ * Both speak the same SQL. Several copies of the app can run at once on Vercel, so anything that must happen once is claimed with a single statement.
+ */
+const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('manager','handler')),
@@ -43,6 +45,7 @@ CREATE TABLE IF NOT EXISTS documents (
   fields_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS documents_claim ON documents(claim_id);
+CREATE INDEX IF NOT EXISTS documents_status ON documents(status);
 CREATE TABLE IF NOT EXISTS flags (
   id TEXT PRIMARY KEY, claim_id TEXT NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
   key TEXT NOT NULL, origin TEXT NOT NULL, severity TEXT NOT NULL, title TEXT NOT NULL, detail TEXT NOT NULL,
@@ -55,36 +58,109 @@ CREATE TABLE IF NOT EXISTS audit (
 );
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS emails_seen (message_id TEXT PRIMARY KEY, claim_ref TEXT, at TEXT NOT NULL);
-`);
+CREATE TABLE IF NOT EXISTS locks (name TEXT PRIMARY KEY, until TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS attempts (key TEXT NOT NULL, at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS attempts_key ON attempts(key, at);
+`;
 
-// Databases created before these columns existed.
-const hasColumn = (table: string, name: string) => db.prepare(`PRAGMA table_info(${table})`).all().some((column) => column.name === name);
-if (!hasColumn('claims', 'contact_phone')) db.exec("ALTER TABLE claims ADD COLUMN contact_phone TEXT NOT NULL DEFAULT ''");
-if (!hasColumn('documents', 'line_items_json')) db.exec("ALTER TABLE documents ADD COLUMN line_items_json TEXT NOT NULL DEFAULT '[]'");
+// Columns added after the first release, for databases created before them.
+const ADDED_COLUMNS: [string, string, string][] = [
+  ['claims', 'contact_phone', "TEXT NOT NULL DEFAULT ''"],
+  ['documents', 'line_items_json', "TEXT NOT NULL DEFAULT '[]'"],
+  ['documents', 'reading_since', 'TEXT'],
+  ['documents', 'read_attempts', 'INTEGER NOT NULL DEFAULT 0'],
+  ['claims', 'analysis_started_at', 'TEXT'],
+  ['claims', 'review_again', 'INTEGER NOT NULL DEFAULT 0'],
+];
+
+let client: Client | null = null;
+let ready: Promise<Client> | null = null;
+
+async function open(): Promise<Client> {
+  if (config.databaseUrl) {
+    const { createClient } = await import('@libsql/client/web');
+    client = createClient({ url: config.databaseUrl, authToken: config.databaseToken });
+  } else {
+    mkdirSync(config.dataDir, { recursive: true });
+    const { createClient } = await import('@libsql/client');
+    client = createClient({ url: `file:${join(config.dataDir, 'claimsflow.db')}` });
+    await client.executeMultiple('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
+  }
+  await client.executeMultiple(SCHEMA);
+  for (const [table, name, type] of ADDED_COLUMNS) {
+    const columns = (await client.execute(`PRAGMA table_info(${table})`)).rows;
+    if (!columns.some((column) => column.name === name)) await client.execute(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+  }
+  // The starting checklists go in once, even when two copies of the app start together.
+  const seeded = await client.execute("INSERT INTO settings (key, value) VALUES ('seeded', '1') ON CONFLICT(key) DO NOTHING");
+  if (seeded.rowsAffected && !(await client.execute('SELECT 1 FROM classes LIMIT 1')).rows.length) {
+    const statements: InStatement[] = [];
+    for (const [name, items] of Object.entries(startingChecklists)) {
+      const id = crypto.randomUUID();
+      statements.push({ sql: 'INSERT INTO classes (id, name) VALUES (?, ?) ON CONFLICT(name) DO NOTHING', args: [id, name] });
+      items.forEach((item, position) =>
+        statements.push({
+          sql: 'INSERT INTO checklist_items (class_id, doc_type, required, position) SELECT id, ?, ?, ? FROM classes WHERE name = ? ON CONFLICT DO NOTHING',
+          args: [item.type, item.required ? 1 : 0, position, name],
+        }),
+      );
+    }
+    await client.batch(statements, 'write');
+  }
+  return client;
+}
+
+/** Opens the database on first use in each copy of the app, and sets it up. */
+export function database(): Promise<Client> {
+  ready ??= open().catch((error) => {
+    ready = null;
+    throw error;
+  });
+  return ready;
+}
 
 export type Row = Record<string, any>;
-export const all = (sql: string, ...args: any[]): Row[] => db.prepare(sql).all(...args) as Row[];
-export const get = (sql: string, ...args: any[]): Row | undefined => db.prepare(sql).get(...args) as Row | undefined;
-export const run = (sql: string, ...args: any[]) => db.prepare(sql).run(...args);
+const values = (args: unknown[]) => args.map((value) => (value === undefined ? null : value)) as InValue[];
+// Plain objects, so rows can be spread and serialised like before.
+const plain = (result: { columns: string[]; rows: ArrayLike<unknown>[] }): Row[] =>
+  result.rows.map((row) => Object.fromEntries(result.columns.map((column, index) => [column, row[index]])));
+
+export async function all(sql: string, ...args: unknown[]): Promise<Row[]> {
+  return plain(await (await database()).execute({ sql, args: values(args) }));
+}
+export async function get(sql: string, ...args: unknown[]): Promise<Row | undefined> {
+  return (await all(sql, ...args))[0];
+}
+export async function run(sql: string, ...args: unknown[]): Promise<{ changes: number }> {
+  const result = await (await database()).execute({ sql, args: values(args) });
+  return { changes: result.rowsAffected };
+}
+/** Several writes that succeed or fail together. */
+export async function batch(statements: [string, ...unknown[]][]) {
+  await (await database()).batch(statements.map(([sql, ...args]) => ({ sql, args: values(args) })), 'write');
+}
+export const count = async (sql: string, ...args: unknown[]) => Number((await get(sql, ...args))?.n ?? 0);
 export const now = () => new Date().toISOString();
 
-export function setting(key: string, fallback = ''): string {
-  return get('SELECT value FROM settings WHERE key = ?', key)?.value ?? fallback;
+export async function setting(key: string, fallback = ''): Promise<string> {
+  return ((await get('SELECT value FROM settings WHERE key = ?', key))?.value as string | undefined) ?? fallback;
 }
-export function setSetting(key: string, value: string) {
-  run('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', key, value);
-}
-
-export function audit(actor: string, action: string, claimRef: string | null = null, detail = '') {
-  run('INSERT INTO audit (at, actor, action, claim_ref, detail) VALUES (?, ?, ?, ?, ?)', now(), actor, action, claimRef, detail);
+export async function setSetting(key: string, value: string) {
+  await run('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', key, value);
 }
 
-if (!get('SELECT 1 AS x FROM classes LIMIT 1')) {
-  for (const [name, items] of Object.entries(startingChecklists)) {
-    const id = crypto.randomUUID();
-    run('INSERT INTO classes (id, name) VALUES (?, ?)', id, name);
-    items.forEach((item, position) =>
-      run('INSERT INTO checklist_items (class_id, doc_type, required, position) VALUES (?, ?, ?, ?)', id, item.type, item.required ? 1 : 0, position),
-    );
-  }
+export async function audit(actor: string, action: string, claimRef: string | null = null, detail = '') {
+  await run('INSERT INTO audit (at, actor, action, claim_ref, detail) VALUES (?, ?, ?, ?, ?)', now(), actor, action, claimRef, detail);
 }
+
+/** True for whoever takes the lock first, until it is released or runs out. Works across every copy of the app. */
+export async function takeLock(name: string, forMs: number): Promise<boolean> {
+  const stamp = now();
+  const until = new Date(Date.now() + forMs).toISOString();
+  const result = await run(
+    'INSERT INTO locks (name, until) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET until = excluded.until WHERE locks.until < ?',
+    name, until, stamp,
+  );
+  return result.changes > 0;
+}
+export const releaseLock = (name: string) => run('DELETE FROM locks WHERE name = ?', name);

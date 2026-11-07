@@ -6,7 +6,7 @@ import { cn } from '@/lib/cn';
 import { api, uploadFiles } from '../api';
 import { Button, DropZone, Loading, Notice, useLoad } from '../ui';
 
-type View = { ref: string; testOnly: boolean; reading: number; received: number; checklist: { label: string; required: boolean; received: boolean }[] };
+type View = { ref: string; testOnly: boolean; directUploads: boolean; reading: number; received: number; checklist: { label: string; required: boolean; received: boolean }[] };
 
 export function Portal() {
   const { token } = useParams();
@@ -32,7 +32,7 @@ export function Portal() {
     setProblem('');
     setMessage('');
     try {
-      const result = await uploadFiles(`/portal/${token}/documents`, files, setProgress);
+      const result = await uploadFiles(`/portal/${token}/documents`, files, setProgress, {}, data?.directUploads ? `portal-${token}` : undefined);
       if (result.added.length) setMessage(`Received: ${result.added.join(', ')}. Thank you.`);
       if (result.rejected.length) setProblem(result.rejected.join(' '));
       await reload();

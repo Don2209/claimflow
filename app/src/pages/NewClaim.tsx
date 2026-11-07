@@ -23,7 +23,7 @@ export function NewClaim() {
       const claim = await api<Claim>('/claims', { body: { ...values, class_id: values.class_id || null } });
       if (files.length) {
         try {
-          await uploadFiles(`/claims/${claim.id}/documents`, files, setProgress);
+          await uploadFiles(`/claims/${claim.id}/documents`, files, setProgress, {}, meta.directUploads ? `claim-${claim.id}` : undefined);
         } catch {
           // The claim exists, so carry on to it and let the handler add the files there.
         }

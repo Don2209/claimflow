@@ -36,7 +36,7 @@ const signIn = async () => {
 const claimCount = async () => ((await (await app.request('/api/claims', { headers: await signIn() })).json()) as unknown[]).length;
 
 test('the page works signed out, asks for nothing, and warns while on a free AI plan', () => {
-  assert.deepEqual(form, { testOnly: true });
+  assert.deepEqual(form, { testOnly: true, directUploads: false });
 });
 
 test('spam, unconsented and unusable uploads are refused without opening a claim', async () => {

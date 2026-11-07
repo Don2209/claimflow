@@ -44,7 +44,7 @@ export function ClaimFile() {
     setActionError('');
     setNotice('');
     try {
-      const result = await uploadFiles(`/claims/${id}/documents`, files, setProgress);
+      const result = await uploadFiles(`/claims/${id}/documents`, files, setProgress, {}, meta.directUploads ? `claim-${id}` : undefined);
       if (result.rejected.length) setActionError(result.rejected.join(' '));
       await reload();
     } catch (err) {

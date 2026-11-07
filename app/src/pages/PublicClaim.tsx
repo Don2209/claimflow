@@ -7,7 +7,7 @@ import { DropZone, Loading, Notice, useLoad } from '../ui';
 /** Where a client starts a claim. There is nothing to fill in: they upload, and the AI takes the details from the documents. */
 export function PublicClaim() {
   const navigate = useNavigate();
-  const { data, error: loadError } = useLoad(() => api<{ testOnly: boolean }>('/public/claim-form'));
+  const { data, error: loadError } = useLoad(() => api<{ testOnly: boolean; directUploads: boolean }>('/public/claim-form'));
   const [consent, setConsent] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState('');
@@ -20,7 +20,7 @@ export function PublicClaim() {
     setError('');
     try {
       const { token, rejected } = await uploadFiles<{ token: string; rejected: string[] }>(
-        '/public/claims', files, setProgress, { consent: String(consent), website: website.current?.value ?? '' },
+        '/public/claims', files, setProgress, { consent: String(consent), website: website.current?.value ?? '' }, data?.directUploads ? 'public' : undefined,
       );
       navigate(`/upload/${token}?new=1`, { state: { rejected } });
     } catch (err) {

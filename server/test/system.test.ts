@@ -233,7 +233,7 @@ test('a handler cannot reach manager-only areas', async () => {
 
 test('exports neutralise spreadsheet formulas, and the dashboard counts', async () => {
   await api('POST', '/claims', { claimant_name: '=HYPERLINK("http://bad")', source: 'Bad Broker' });
-  assert.ok(claimsCsv().includes(`"'=HYPERLINK(""http://bad"")"`));
+  assert.ok((await claimsCsv()).includes(`"'=HYPERLINK(""http://bad"")"`));
   const xlsx = await api('GET', '/export/claims.xlsx');
   assert.equal(xlsx.status, 200);
   assert.equal(Buffer.from(await xlsx.arrayBuffer()).subarray(0, 2).toString(), 'PK');

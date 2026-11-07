@@ -1,10 +1,54 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
-import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, type DecipherGCM } from 'node:crypto';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { Readable, Transform } from 'node:stream';
 import sharp from 'sharp';
 import { config } from './config.ts';
 
-const pathFor = (id: string) => join(config.dataDir, 'files', id);
+/**
+ * Where encrypted documents are kept: a private Vercel Blob store when BLOB_READ_WRITE_TOKEN is set, otherwise DATA_DIR/files.
+ * Each file is IV (12 bytes), then the GCM tag (16), then the encrypted bytes. Both stores hold exactly that.
+ */
+type Store = {
+  write(name: string, data: Buffer): Promise<void>;
+  read(name: string): Promise<Buffer>;
+  stream(name: string): Promise<Readable>;
+  remove(name: string): Promise<void>;
+};
+
+const diskPath = (name: string) => join(config.dataDir, 'files', name);
+const disk: Store = {
+  async write(name, data) {
+    mkdirSync(join(config.dataDir, 'files'), { recursive: true });
+    writeFileSync(diskPath(name), data, { mode: 0o600 });
+  },
+  read: async (name) => readFileSync(diskPath(name)),
+  stream: async (name) => Readable.from([readFileSync(diskPath(name))]),
+  remove: async (name) => rmSync(diskPath(name), { force: true }),
+};
+
+const blobPath = (name: string) => `documents/${name}`;
+const blob: Store = {
+  async write(name, data) {
+    const { put } = await import('@vercel/blob');
+    await put(blobPath(name), data, { access: 'private', contentType: 'application/octet-stream', allowOverwrite: true, token: config.blobToken });
+  },
+  async read(name) {
+    return Buffer.concat(await (await this.stream(name)).toArray());
+  },
+  async stream(name) {
+    const { get } = await import('@vercel/blob');
+    const found = await get(blobPath(name), { access: 'private', useCache: false, token: config.blobToken });
+    if (!found || found.statusCode !== 200 || !found.stream) throw new Error(`Stored file ${name} is missing.`);
+    return Readable.fromWeb(found.stream as import('node:stream/web').ReadableStream);
+  },
+  async remove(name) {
+    const { del } = await import('@vercel/blob');
+    await del(blobPath(name), { token: config.blobToken });
+  },
+};
+
+const store = (): Store => (config.blobToken ? blob : disk);
 
 export const WORD = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 export const OLD_WORD = 'application/msword';
@@ -58,18 +102,48 @@ export function detectFileType(data: Buffer, filename = ''): string | null {
 
 export const sha256 = (data: Buffer) => createHash('sha256').update(data).digest('hex');
 
-export function saveFile(id: string, data: Buffer) {
+export async function saveFile(id: string, data: Buffer) {
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', config.key, iv);
   const body = Buffer.concat([cipher.update(data), cipher.final()]);
-  writeFileSync(pathFor(id), Buffer.concat([iv, cipher.getAuthTag(), body]), { mode: 0o600 });
+  await store().write(id, Buffer.concat([iv, cipher.getAuthTag(), body]));
 }
 
-export function readFile(id: string): Buffer {
-  const stored = readFileSync(pathFor(id));
+export async function readFile(id: string): Promise<Buffer> {
+  const stored = await store().read(id);
   const decipher = createDecipheriv('aes-256-gcm', config.key, stored.subarray(0, 12));
   decipher.setAuthTag(stored.subarray(12, 28));
   return Buffer.concat([decipher.update(stored.subarray(28)), decipher.final()]);
+}
+
+/**
+ * Decrypts as it reads, so a large document never sits whole in memory. The tag is checked at the end:
+ * if the file was tampered with, the stream fails there instead of finishing.
+ */
+export async function streamFile(id: string): Promise<ReadableStream<Uint8Array>> {
+  const source = await store().stream(id);
+  let head = Buffer.alloc(0);
+  let decipher: DecipherGCM | null = null;
+  const decrypt = new Transform({
+    transform(chunk: Buffer, _encoding, done) {
+      if (decipher) return done(null, decipher.update(chunk));
+      head = Buffer.concat([head, chunk]);
+      if (head.length < 28) return done();
+      decipher = createDecipheriv('aes-256-gcm', config.key, head.subarray(0, 12));
+      decipher.setAuthTag(head.subarray(12, 28));
+      done(null, decipher.update(head.subarray(28)));
+    },
+    flush(done) {
+      try {
+        if (!decipher) throw new Error('Stored file is damaged.');
+        done(null, decipher.final());
+      } catch (error) {
+        done(error as Error);
+      }
+    },
+  });
+  source.on('error', (error) => decrypt.destroy(error));
+  return Readable.toWeb(source.pipe(decrypt)) as ReadableStream<Uint8Array>;
 }
 
 export function encryptText(text: string): string {
@@ -86,7 +160,7 @@ export function decryptText(stored: string): string {
   return Buffer.concat([decipher.update(raw.subarray(28)), decipher.final()]).toString('utf8');
 }
 
-export const deleteFile = (id: string) => rmSync(pathFor(id), { force: true });
+export const deleteFile = (id: string) => store().remove(id);
 
 /** Phone photos can be too large for the AI and sideways. This straightens and shrinks a copy; the original is kept as received. */
 export async function imageForReading(data: Buffer): Promise<Buffer> {

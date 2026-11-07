@@ -3,12 +3,15 @@ import { createHash, randomBytes } from 'node:crypto';
 import { join, resolve } from 'node:path';
 
 const dataDir = resolve(process.env.DATA_DIR || 'data');
-mkdirSync(join(dataDir, 'files'), { recursive: true });
+// Vercel sets VERCEL. Its disk is read-only and not kept, so data lives in Turso and Vercel Blob there.
+const onVercel = Boolean(process.env.VERCEL);
 
-/** The key for documents on disk. Set DATA_ENCRYPTION_KEY in production, and keep a copy: without it the files cannot be read. */
+/** The key for stored documents. Set DATA_ENCRYPTION_KEY in production, and keep a copy: without it the files cannot be read. */
 function encryptionKey(): Buffer {
   const fromEnv = process.env.DATA_ENCRYPTION_KEY;
   if (fromEnv) return createHash('sha256').update(fromEnv).digest();
+  if (onVercel) throw new Error('Set DATA_ENCRYPTION_KEY in the Vercel project settings. Without it, stored documents cannot be opened.');
+  mkdirSync(dataDir, { recursive: true });
   const path = join(dataDir, '.data-key');
   if (!existsSync(path)) {
     writeFileSync(path, randomBytes(32).toString('base64'), { mode: 0o600 });
@@ -20,11 +23,19 @@ function encryptionKey(): Buffer {
 // Gemini when its key is set, unless AI_PROVIDER says otherwise.
 const provider = process.env.AI_PROVIDER === 'anthropic' || !process.env.GEMINI_API_KEY ? 'anthropic' : 'gemini';
 
-const publicUrl = (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:8787').replace(/\/$/, '');
+const vercelUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL;
+const publicUrl = (process.env.PUBLIC_URL || (vercelUrl ? `https://${vercelUrl}` : '') || 'http://localhost:8787').replace(/\/$/, '');
 
 export const config = {
   port: Number(process.env.PORT || 8787),
   dataDir,
+  onVercel,
+  databaseUrl: process.env.TURSO_DATABASE_URL || '',
+  databaseToken: process.env.TURSO_AUTH_TOKEN || undefined,
+  // Private Vercel Blob when its token is set. Otherwise files go in DATA_DIR/files.
+  blobToken: process.env.BLOB_READ_WRITE_TOKEN || '',
+  // Vercel sends this with each scheduled run, so nobody else can start one.
+  cronSecret: process.env.CRON_SECRET || '',
   publicUrl,
   secureCookies: publicUrl.startsWith('https://'),
   key: encryptionKey(),

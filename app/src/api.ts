@@ -22,8 +22,51 @@ export async function api<T = any>(path: string, options: { method?: string; bod
   return data as T;
 }
 
-/** Sends files and reports progress, because phone photos on a slow connection can take a while. */
-export function uploadFiles<T = { added: string[]; rejected: string[] }>(url: string, files: File[], onProgress: (share: number) => void, fields: Record<string, string> = {}): Promise<T> {
+/**
+ * Sends files and reports progress, because phone photos on a slow connection can take a while.
+ * With `directTo` (on Vercel, whose functions refuse bodies over 4.5 MB), each file goes straight to private storage
+ * under that scope, and the app is then told which files arrived. Otherwise the files go in the request itself.
+ */
+export async function uploadFiles<T = { added: string[]; rejected: string[] }>(
+  url: string, files: File[], onProgress: (share: number) => void, fields: Record<string, string> = {}, directTo?: string,
+): Promise<T> {
+  if (!directTo) return uploadForm<T>(url, files, onProgress, fields);
+  const { upload } = await import('@vercel/blob/client');
+  const total = files.reduce((sum, file) => sum + file.size, 0) || 1;
+  const sent = new Map<number, number>();
+  const report = () => onProgress([...sent.values()].reduce((sum, bytes) => sum + bytes, 0) / total);
+  const uploads: { pathname: string; name: string }[] = [];
+  try {
+    // A few at a time, so one slow photo does not hold up the rest.
+    const queue = files.map((file, index) => ({ file, index }));
+    const worker = async () => {
+      for (let next = queue.shift(); next; next = queue.shift()) {
+        const { file, index } = next;
+        const safeName = file.name.replace(/[^\w.\- ]/g, '_').slice(-120) || 'file';
+        const blob = await upload(`incoming/${directTo}/${crypto.randomUUID()}/${safeName}`, file, {
+          access: 'private',
+          handleUploadUrl: '/api/uploads',
+          clientPayload: JSON.stringify({ scope: directTo }),
+          multipart: file.size > 8 * 1024 * 1024,
+          onUploadProgress: ({ loaded }) => {
+            sent.set(index, loaded);
+            report();
+          },
+        });
+        sent.set(index, file.size);
+        report();
+        uploads.push({ pathname: blob.pathname, name: file.name });
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+  } catch (error) {
+    const message = (error as Error).message ?? '';
+    throw new ApiError(/not allowed|limit/i.test(message) ? 'The upload was refused. The upload limit may have been reached. Contact the claims team.' : 'The upload stopped. Check your connection and try again.', 0);
+  }
+  return api<T>(url, { body: { ...fields, uploads } });
+}
+
+function uploadForm<T>(url: string, files: File[], onProgress: (share: number) => void, fields: Record<string, string>): Promise<T> {
   return new Promise((resolve, reject) => {
     const form = new FormData();
     Object.entries(fields).forEach(([name, value]) => form.append(name, value));
@@ -83,7 +126,7 @@ export type ClaimRow = {
   stage: string; stageLabel: string; createdAt: string; updatedAt: string; documents: number; missing: string[]; openFlags: number;
 };
 export type Meta = {
-  documentTypes: Record<string, string>; stages: Record<string, string>; classes: { id: string; name: string }[]; ai: boolean; aiName: string; freeAiPlan: boolean; sending: boolean;
+  documentTypes: Record<string, string>; stages: Record<string, string>; classes: { id: string; name: string }[]; ai: boolean; aiName: string; freeAiPlan: boolean; sending: boolean; directUploads: boolean;
 };
 export type User = { id: string; email: string; name: string; role: 'manager' | 'handler'; active: boolean };
 export type Inbox =

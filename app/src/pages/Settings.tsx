@@ -121,6 +121,19 @@ function ClaimsInbox({ freePlan }: { freePlan: boolean }) {
             </dl>
             {inbox.lastError && <Notice tone="danger">{inbox.lastError}</Notice>}
             <p className="text-caption text-muted">Emails are marked as read once they are saved here. Older mail is left alone.</p>
+            <label className="flex items-start gap-2 text-small">
+              <input
+                type="checkbox"
+                className="mt-1 size-4 shrink-0 accent-[rgb(var(--accent))]"
+                checked={inbox.acknowledge}
+                disabled={busy}
+                onChange={(e) => void run(() => api('/settings/inbox/acknowledge', { method: 'PUT', body: { on: e.target.checked } }), e.target.checked ? 'Senders will get an automatic reply.' : 'Automatic replies are off.')}
+              />
+              <span>
+                <span className="font-medium">Reply to senders automatically</span>
+                <span className="block text-caption text-muted">Confirms the claim reference and which documents arrived, from this mailbox. Automatic messages and mailing lists never get a reply.</span>
+              </span>
+            </label>
             <div className="flex flex-wrap gap-2">
               <Button busy={busy} onClick={() => void run(() => api('/settings/inbox/check', { method: 'POST' }), 'Checked.')}>Check now</Button>
               <Button onClick={edit}>Change details</Button>

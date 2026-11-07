@@ -1,8 +1,9 @@
 import { resolveMx } from 'node:dns/promises';
 import { ImapFlow } from 'imapflow';
-import { simpleParser } from 'mailparser';
-import nodemailer from 'nodemailer';
-import { createClaim } from './claims.ts';
+import { simpleParser, type ParsedMail } from 'mailparser';
+import nodemailer, { type SendMailOptions } from 'nodemailer';
+import { recentAttempts, noteAttempt } from './auth.ts';
+import { createClaim, portalLink } from './claims.ts';
 import { config } from './config.ts';
 import { all, audit, get, now, releaseLock, run, setSetting, setting, takeLock, type Row } from './db.ts';
 import { later } from './background.ts';
@@ -38,17 +39,20 @@ export async function ingestEmail(raw: Buffer): Promise<{ claimRef: string; adde
     await run('INSERT INTO emails_seen (message_id, claim_ref, at) VALUES (?, ?, ?)', messageId, null, now());
     return null;
   }
+  const isNew = !matched;
   const claim =
     matched ??
     await createClaim({ contact_email: sender, source: sender.split('@')[1] ?? '', notes: `From email: ${mail.subject ?? '(no subject)'}` }, 'Claims inbox');
 
   let added = 0;
+  const addedNames: string[] = [];
   const skipped: string[] = [];
   for (const attachment of usable) {
     const name = attachment.filename || 'attachment';
     try {
       await addDocument(claim, name, attachment.content, 'email', 'Claims inbox');
       added += 1;
+      addedNames.push(name);
     } catch (error) {
       if (!(error instanceof FileRejected)) throw error;
       skipped.push(error.message);
@@ -57,7 +61,107 @@ export async function ingestEmail(raw: Buffer): Promise<{ claimRef: string; adde
   await audit('Claims inbox', 'Received email', claim.ref, `From ${sender}: "${mail.subject ?? ''}". ${added} added, ${skipped.length} skipped. ${skipped.join(' ')}`);
   await run('INSERT INTO emails_seen (message_id, claim_ref, at) VALUES (?, ?, ?)', messageId, claim.ref, now());
   if (added) startReading();
+  later(acknowledge(mail, claim, { isNew, addedNames, skipped }));
   return { claimRef: claim.ref, added, skipped };
+}
+
+// ---- The automatic reply that tells a sender their email arrived. ----
+const ACKS_PER_SENDER_PER_HOUR = 5;
+const NO_REPLY_SENDER = /^(no-?reply|do-?not-?reply|mailer-daemon|postmaster|bounces?|notifications?)([+.\-_]|@)/i;
+
+export const acknowledgementsOn = async () => (await setting('inbox_ack', 'on')) === 'on';
+export const setAcknowledgements = (on: boolean) => setSetting('inbox_ack', on ? 'on' : 'off');
+
+/** Why this email must not get an automatic reply, or an empty string. Replying to robots and lists causes mail loops. */
+export function whyNotAcknowledge(mail: ParsedMail, inboxUser: string): string {
+  const sender = (mail.from?.value[0]?.address ?? '').toLowerCase();
+  const header = (name: string) => String(mail.headers.get(name) ?? '').toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(sender)) return 'no usable sender address';
+  if (sender === inboxUser.toLowerCase()) return 'sent from the claims inbox itself';
+  if (NO_REPLY_SENDER.test(sender)) return 'sent from an address that takes no replies';
+  if (header('auto-submitted') && header('auto-submitted') !== 'no') return 'an automatic message';
+  if (/bulk|list|junk|auto_reply/.test(header('precedence'))) return 'a bulk or list message';
+  // mailparser gathers List-Id, List-Unsubscribe and the rest under "list".
+  if (mail.headers.has('list') || mail.headers.has('list-id') || mail.headers.has('list-unsubscribe')) return 'from a mailing list';
+  if (mail.headers.has('x-autoreply') || mail.headers.has('x-autorespond')) return 'an automatic message';
+  return '';
+}
+
+async function acknowledge(mail: ParsedMail, claim: Row, result: { isNew: boolean; addedNames: string[]; skipped: string[] }) {
+  if (!(await acknowledgementsOn())) return;
+  const saved = await stored();
+  const reason = whyNotAcknowledge(mail, saved?.user ?? config.smtp?.from ?? '');
+  if (reason) return;
+  const sender = mail.from!.value[0]!.address!.toLowerCase();
+  const key = `ack:${sender}`;
+  if ((await recentAttempts(key, 3600_000)) >= ACKS_PER_SENDER_PER_HOUR) return;
+  await noteAttempt(key);
+
+  // The private upload link only goes to the claim's own contact, never to anyone who happens to mention the claim.
+  const isContact = result.isNew || (claim.contact_email && String(claim.contact_email).toLowerCase() === sender);
+  const subject = mail.subject?.trim() || 'Your email';
+  const lines = [
+    'Hello,',
+    '',
+    `Thank you. We have received your email, and it is now on claim ${claim.ref}.`,
+    '',
+    ...(result.addedNames.length ? ['Documents received:', ...result.addedNames.map((name) => `- ${name}`), ''] : []),
+    ...(result.skipped.length ? ['Not accepted:', ...result.skipped.map((problem) => `- ${problem}`), ''] : []),
+    `Please quote ${claim.ref} in anything else you send about this claim.`,
+    ...(isContact ? ['', 'You can also add documents here:', portalLink(claim)] : []),
+    '',
+    'This is an automatic reply. The claims team will be in touch if anything else is needed.',
+  ];
+  const references = [mail.references ?? []].flat().concat(mail.messageId ? [mail.messageId] : []);
+  try {
+    await sendFromClaims({
+      to: sender,
+      subject: `${/^re:/i.test(subject) ? subject : `Re: ${subject}`}${subject.includes(claim.ref) ? '' : ` [${claim.ref}]`}`,
+      text: lines.join('\n'),
+      inReplyTo: mail.messageId,
+      references: references.length ? references : undefined,
+      headers: { 'Auto-Submitted': 'auto-replied', 'X-Auto-Response-Suppress': 'All' },
+    });
+    await audit('Claims inbox', 'Sent acknowledgement', claim.ref, `To ${sender}`);
+  } catch (error) {
+    console.error('Acknowledgement not sent:', error);
+    await audit('Claims inbox', 'Could not send acknowledgement', claim.ref, `To ${sender}: ${(error as Error).message?.slice(0, 160) ?? ''}`);
+  }
+}
+
+/**
+ * Sends as the claims team: through SMTP_* when set, otherwise through the claims inbox's own mail server, signing in
+ * with the same address and password. Most hosts accept that on port 465, or 587 with STARTTLS.
+ */
+async function sendFromClaims(message: Omit<SendMailOptions, 'from'>) {
+  if (config.smtp) {
+    const smtp = config.smtp;
+    const transport = nodemailer.createTransport({
+      host: smtp.host, port: smtp.port, secure: smtp.secure,
+      auth: smtp.user ? { user: smtp.user, pass: smtp.pass } : undefined,
+    });
+    await transport.sendMail({ from: smtp.from, ...message });
+    return;
+  }
+  const saved = await stored();
+  if (!saved) throw new Error('Email sending is not set up, and no claims inbox is connected.');
+  const pass = decryptText(saved.passwordEncrypted);
+  let lastError: unknown;
+  for (const [port, secure] of [[465, true], [587, false]] as const) {
+    const transport = nodemailer.createTransport({
+      host: saved.host, port, secure, requireTLS: !secure, auth: { user: saved.user, pass },
+      connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 30_000,
+    });
+    try {
+      await transport.sendMail({ from: saved.user, ...message });
+      return;
+    } catch (error) {
+      lastError = error;
+      // The server answered and refused the password, so another port will not help.
+      if ((error as { code?: string }).code === 'EAUTH') break;
+    }
+  }
+  throw lastError;
 }
 
 // ---- The claims inbox, set up by a manager in Settings. ----
@@ -199,9 +303,9 @@ export async function checkInboxNow() {
 
 export async function inboxView() {
   const saved = await stored();
-  if (!saved) return { connected: false as const };
+  if (!saved) return { connected: false as const, acknowledge: await acknowledgementsOn() };
   const checking = Boolean(await get('SELECT 1 AS x FROM locks WHERE name = ? AND until > ?', INBOX_LOCK, now()));
-  return { connected: true as const, host: saved.host, port: saved.port, user: saved.user, mailbox: saved.mailbox, connectedAt: saved.connectedAt, ...(await readStatus()), checking };
+  return { connected: true as const, host: saved.host, port: saved.port, user: saved.user, mailbox: saved.mailbox, connectedAt: saved.connectedAt, ...(await readStatus()), checking, acknowledge: await acknowledgementsOn() };
 }
 
 /** Tests the details first, so a mistake is reported straight away and nothing wrong is saved. A blank password keeps the saved one. */

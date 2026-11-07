@@ -130,5 +130,5 @@ export type Meta = {
 };
 export type User = { id: string; email: string; name: string; role: 'manager' | 'handler'; active: boolean };
 export type Inbox =
-  | { connected: false }
-  | { connected: true; host: string; port: number; user: string; mailbox: string; connectedAt: string; lastCheck: string | null; lastError: string | null; lastAdded: number; checking: boolean };
+  | { connected: false; acknowledge: boolean }
+  | { connected: true; acknowledge: boolean; host: string; port: number; user: string; mailbox: string; connectedAt: string; lastCheck: string | null; lastError: string | null; lastAdded: number; checking: boolean };

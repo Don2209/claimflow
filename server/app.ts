@@ -10,7 +10,7 @@ import { checklistFor, claimDetail, claimRows, createClaim, portalLink, stageLab
 import { config } from './config.ts';
 import { all, audit, batch, count, get, now, run, setSetting, setting, type Row } from './db.ts';
 import { documentTypes } from './doctypes.ts';
-import { checkInboxNow, connectInbox, disconnectInbox, inboxView, sendEmail } from './email.ts';
+import { checkInboxNow, connectInbox, disconnectInbox, inboxView, sendEmail, setAcknowledgements } from './email.ts';
 import { streamFile } from './files.ts';
 import { addDocument, checkUpload, FileRejected, refreshRuleChecks, removeDocument, reviewFile, fileChanged, startReading, deleteClaim } from './pipeline.ts';
 import { directToStorage, received, uploadToken } from './uploads.ts';
@@ -557,6 +557,13 @@ staff.put('/settings/inbox', requireManager, async (c) => {
   const problem = await connectInbox({ ...input, mailbox: input.mailbox || 'INBOX' });
   if (problem) return c.json({ error: problem }, 400);
   await audit(c.get('user').name, 'Connected claims inbox', null, input.user);
+  return c.json(await inboxView());
+});
+
+staff.put('/settings/inbox/acknowledge', requireManager, async (c) => {
+  const { on } = z.object({ on: z.boolean() }).parse(await c.req.json());
+  await setAcknowledgements(on);
+  await audit(c.get('user').name, on ? 'Turned on automatic replies to senders' : 'Turned off automatic replies to senders');
   return c.json(await inboxView());
 });
 

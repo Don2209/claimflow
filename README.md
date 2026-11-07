@@ -162,7 +162,7 @@ The product itself lives in `server/` (API, database, AI) and `app/` (the screen
      - An AI key: `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` with `GEMINI_PAID=true`.
   5. Under Settings → Functions, put the function region next to the Turso database's region. For users in southern Africa, Turso's Frankfurt with Vercel's `fra1`, or Vercel's `cpt1` with the nearest Turso region, keeps every page fast.
   6. Deploy.
-- **Plan:** Vercel's Hobby plan is for non-commercial use, so run the insurer's app on Pro. The schedule runs every minute (`CLAIMSFLOW_CRON`, default `* * * * *`), which Hobby refuses at deploy time. For a Hobby trial, set `CLAIMSFLOW_CRON=0 6 * * *`. Uploads are still read straight away, but the claims inbox is checked only once a day, and "Check now" in Settings does the rest.
+- **Plan:** Vercel's Hobby plan is for non-commercial use, so run the insurer's app on Pro. The schedule runs every minute (`CLAIMSFLOW_CRON`, default `* * * * *`), which Hobby refuses at deploy time. For a Hobby trial, set `CLAIMSFLOW_CRON=0 6 * * *`. Uploads are still read straight away. To check the claims inbox every minute on Hobby, have a free outside scheduler such as cron-job.org call `GET /api/cron/tick` every minute with the header `Authorization: Bearer <CRON_SECRET>`. The app replies at once and does the work after, so a scheduler that gives up after 30 seconds is fine.
 - **How it runs on Vercel:**
   - The screens are static files on Vercel's CDN, and every `/api` request goes to one Node function (`server/vercel.ts`).
   - Vercel refuses request bodies over 4.5 MB, so the browser sends each file straight to the private Blob store. The app then checks the file, stores an encrypted copy and deletes the original (`server/uploads.ts`).

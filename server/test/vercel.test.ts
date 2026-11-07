@@ -63,9 +63,12 @@ test('a read cut off by the time limit is put back, and one that keeps stopping 
 test('scheduled work runs only for a caller with the cron secret', async () => {
   assert.equal((await call('/api/cron/tick')).status, 401);
   assert.equal((await call('/api/cron/tick', { headers: { Authorization: 'Bearer wrong' } })).status, 401);
-  const res = await call('/api/cron/tick', { headers: { Authorization: 'Bearer a-long-enough-secret' } });
+  const res = await call('/api/cron/tick?wait=1', { headers: { Authorization: 'Bearer a-long-enough-secret' } });
   assert.equal(res.status, 200);
   assert.deepEqual(await res.json(), { ok: true, problems: [] });
+  // Without ?wait it answers at once, for schedulers that give up after a few seconds.
+  const quick = await call('/api/cron/tick', { headers: { Authorization: 'Bearer a-long-enough-secret' } });
+  assert.equal(quick.status, 202);
 });
 
 test("files sent to storage for one claim cannot be added to another", async () => {

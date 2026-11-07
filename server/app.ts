@@ -584,7 +584,7 @@ staff.post('/settings/test-ai', requireManager, async (c) => {
   }
 });
 
-// ---- Scheduled work. Vercel calls this on the schedule in the build output, with CRON_SECRET as a bearer token. ----
+// ---- Scheduled work. Vercel (daily on Hobby) or an outside scheduler calls this, with CRON_SECRET as a bearer token. ----
 app.get('/api/cron/tick', async (c) => {
   if (!config.cronSecret) {
     if (config.onVercel) return c.json({ error: 'Set CRON_SECRET in the Vercel project settings.' }, 503);
@@ -592,6 +592,12 @@ app.get('/api/cron/tick', async (c) => {
     return c.json({ error: 'Not allowed.' }, 401);
   }
   const { tick } = await import('./tick.ts');
+  // Outside schedulers such as cron-job.org stop waiting after about 30 seconds, so reply at once and work on after.
+  // ?wait=1 waits for the result instead.
+  if (!c.req.query('wait')) {
+    later(tick());
+    return c.json({ ok: true, started: true }, 202);
+  }
   const problems = await tick();
   return c.json({ ok: !problems.length, problems });
 });
